@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "MotoYa",
+    "slug": "motoya",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.motoya.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "MotoYa necesita tu ubicación para solicitar y aceptar viajes.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "MotoYa necesita tu ubicación para mostrar tu posición a los clientes.",
+        "NSCameraUsageDescription": "Necesario para subir documentos.",
+        "NSPhotoLibraryUsageDescription": "Necesario para subir fotos de documentos."
+      }
+    },
+    "android": {
+      "package": "com.motoya.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#030712"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-location",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "La app necesita acceso a fotos para subir documentos.",
+          "cameraPermission": "La app necesita acceso a la cámara para tomar fotos de documentos."
+        }
+      ]
+    ],
+    "scheme": "motoya",
+    "extra": {
+      "apiBaseUrl": "http://localhost:3000/api",
+      "googleMapsApiKey": ""
+    }
+  }
+}
