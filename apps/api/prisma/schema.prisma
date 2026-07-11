@@ -67,6 +67,9 @@ model RiderProfile {
  available Boolean @default(false)
  vehiclePlate String?
  vehicleModel String?
+ nationalId String?
+ driverLicense String?
+ documentsVerifiedAt DateTime?
  subscriptions RiderSubscription[]
 }
 model RiderSubscription {

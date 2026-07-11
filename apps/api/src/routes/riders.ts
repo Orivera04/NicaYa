@@ -4,7 +4,7 @@ import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 export const ridersRouter=Router(); ridersRouter.use(authenticate,authorize("RIDER"));
 ridersRouter.get("/me",async(req,res)=>res.json(await prisma.riderProfile.findUnique({where:{userId:req.user!.id},include:{subscriptions:{orderBy:{createdAt:"desc"}}}})));
-ridersRouter.patch("/me",async(req,res)=>res.json(await prisma.riderProfile.update({where:{userId:req.user!.id},data:{vehiclePlate:req.body.vehiclePlate,vehicleModel:req.body.vehicleModel}})));
+ridersRouter.patch("/me",async(req,res)=>res.json(await prisma.riderProfile.update({where:{userId:req.user!.id},data:{vehiclePlate:req.body.vehiclePlate,vehicleModel:req.body.vehicleModel,nationalId:req.body.nationalId,driverLicense:req.body.driverLicense}})));
 ridersRouter.patch("/me/availability",async(req,res)=>{const d=availabilitySchema.parse(req.body);const p=await prisma.riderProfile.update({where:{userId:req.user!.id},data:{available:d.available}});req.app.get("io")?.to("admins").emit("rider:availability-updated",p);res.json(p);});
 ridersRouter.get("/me/subscription",async(req,res)=>res.json(await prisma.riderSubscription.findFirst({where:{rider:{userId:req.user!.id}},orderBy:{createdAt:"desc"}})));
 ridersRouter.get("/available-trips",async(_req,res)=>res.json(await prisma.trip.findMany({where:{status:"REQUESTED"},orderBy:{createdAt:"desc"},take:30})));
