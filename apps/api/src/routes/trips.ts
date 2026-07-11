@@ -1,0 +1,16 @@
+import { Router } from "express";
+import { TripStatus } from "@prisma/client";
+import { ratingSchema, tripCreateSchema } from "@motoya/shared";
+import { prisma } from "../db.js";
+import { fail } from "../lib/error.js";
+import { authenticate, authorize } from "../middleware/auth.js";
+import { acceptTrip,cancelTrip,changeStatus,createTrip,estimate } from "../services/trip.service.js";
+export const tripsRouter=Router(); tripsRouter.use(authenticate);
+tripsRouter.post("/estimate",authorize("CLIENT"),async(req,res)=>{const d=tripCreateSchema.parse(req.body);res.json(await estimate(d.origin,d.destination));});
+tripsRouter.post("/",authorize("CLIENT"),async(req,res)=>{const d=tripCreateSchema.parse(req.body);const trip=await createTrip(req.user!.id,d.origin,d.destination);req.app.get("io")?.to("riders").emit("trip:requested",trip);res.status(201).json(trip);});
+tripsRouter.get("/",async(req,res)=>{const where=req.user!.role==="CLIENT"?{clientId:req.user!.id}:req.user!.role==="RIDER"?{riderId:req.user!.id}:{};res.json(await prisma.trip.findMany({where,include:{client:true,rider:true,rating:true},orderBy:{createdAt:"desc"}}));});
+tripsRouter.get("/:id",async(req,res)=>{const t=await prisma.trip.findUnique({where:{id:req.params.id},include:{client:true,rider:true,histories:true,rating:true}});if(!t)fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");if(req.user!.role!=="ADMIN"&&t.clientId!==req.user!.id&&t.riderId!==req.user!.id)fail(403,"FORBIDDEN","No puedes ver este viaje.");res.json(t);});
+tripsRouter.post("/:id/accept",authorize("RIDER"),async(req,res)=>{const t=await acceptTrip(req.params.id,req.user!.id);req.app.get("io")?.to(`user:${t.clientId}`).emit("trip:accepted",t);req.app.get("io")?.to("admins").emit("trip:status-updated",t);res.json(t);});
+tripsRouter.patch("/:id/status",authorize("RIDER"),async(req,res)=>{const status=String(req.body.status) as TripStatus;const t=await changeStatus(req.params.id,req.user!.id,req.user!.role,status);req.app.get("io")?.to(`user:${t.clientId}`).emit("trip:status-updated",t);res.json(t);});
+tripsRouter.post("/:id/cancel",async(req,res)=>{const t=await cancelTrip(req.params.id,req.user!.id,req.user!.role);req.app.get("io")?.to(`user:${t.clientId}`).emit("trip:cancelled",t);if(t.riderId)req.app.get("io")?.to(`user:${t.riderId}`).emit("trip:cancelled",t);res.json(t);});
+tripsRouter.post("/:id/rating",authorize("CLIENT"),async(req,res)=>{const d=ratingSchema.parse(req.body);const trip=await prisma.trip.findUnique({where:{id:req.params.id}});if(!trip||trip.clientId!==req.user!.id||trip.status!=="COMPLETED"||!trip.riderId)fail(409,"RATING_NOT_ALLOWED","Solo puedes calificar viajes finalizados propios.");res.status(201).json(await prisma.rating.create({data:{tripId:trip.id,authorId:req.user!.id,riderId:trip.riderId,...d}}));});

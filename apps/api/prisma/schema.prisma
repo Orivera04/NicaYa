@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+enum Role { 
+ CLIENT
+ RIDER
+ ADMIN
+}
+enum UserStatus { 
+ ACTIVE
+ SUSPENDED
+ DISABLED
+}
+enum RiderApproval { 
+ PENDING
+ APPROVED
+ REJECTED
+}
+enum SubscriptionStatus { 
+ PENDING
+ ACTIVE
+ EXPIRED
+ CANCELLED
+}
+enum TripStatus { 
+ REQUESTED
+ ACCEPTED
+ RIDER_ON_THE_WAY
+ RIDER_ARRIVED
+ IN_PROGRESS
+ COMPLETED
+ CANCELLED_BY_CLIENT
+ CANCELLED_BY_RIDER
+ CANCELLED_BY_ADMIN
+}
+model User {
+ id String @id @default(cuid())
+ name String
+ email String @unique
+ passwordHash String
+ role Role
+ status UserStatus @default(ACTIVE)
+ phone String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ clientProfile ClientProfile?
+ riderProfile RiderProfile?
+ refreshTokens RefreshToken[]
+ clientTrips Trip[] @relation("ClientTrips")
+ riderTrips Trip[] @relation("RiderTrips")
+ activatedSubscriptions RiderSubscription[] @relation("ActivatedBy")
+}
+model ClientProfile {
+ id String @id @default(cuid())
+ userId String @unique
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+}
+model RiderProfile {
+ id String @id @default(cuid())
+ userId String @unique
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ approval RiderApproval @default(PENDING)
+ available Boolean @default(false)
+ vehiclePlate String?
+ vehicleModel String?
+ subscriptions RiderSubscription[]
+}
+model RiderSubscription {
+ id String @id @default(cuid())
+ riderId String
+ rider RiderProfile @relation(fields:[riderId],references:[id],onDelete:Cascade)
+ status SubscriptionStatus @default(PENDING)
+ startsAt DateTime?
+ expiresAt DateTime?
+ pricePaid Decimal? @db.Decimal(10,2)
+ currency String @default("USD")
+ activatedById String?
+ activatedBy User? @relation("ActivatedBy",fields:[activatedById],references:[id])
+ createdAt DateTime @default(now())
+}
+model Trip {
+ id String @id @default(cuid())
+ clientId String
+ client User @relation("ClientTrips",fields:[clientId],references:[id])
+ riderId String?
+ rider User? @relation("RiderTrips",fields:[riderId],references:[id])
+ status TripStatus @default(REQUESTED)
+ originLat Float
+ originLng Float
+ originAddress String
+ destinationLat Float
+ destinationLng Float
+ destinationAddress String
+ distanceKm Float
+ estimatedPrice Decimal @db.Decimal(10,2)
+ currency String @default("USD")
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+}
+model RefreshToken {
+ id String @id @default(cuid())
+ tokenHash String @unique
+ userId String
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ expiresAt DateTime
+ revokedAt DateTime?
+ createdAt DateTime @default(now())
+}
+model SystemSetting {
+ key String @id
+ value String
+ updatedAt DateTime @updatedAt
+}
