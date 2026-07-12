@@ -30,6 +30,7 @@ export default function ClientPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [placeLabel, setPlaceLabel] = useState("");
   const [reference, setReference] = useState("");
+  const [locationNotice, setLocationNotice] = useState("");
 
   const loadFavorites = () => api<SavedPlace[]>("/places").then(setFavorites).catch(() => undefined);
 
@@ -65,6 +66,10 @@ export default function ClientPage() {
     setMessage("Destino seleccionado. Calcula la estimación.");
   };
 
+  const interpretedPoint = async (point: MapPoint) => {
+    try { return await api<Place>(`/geocoding/reverse?lat=${point.lat}&lng=${point.lng}`); }
+    catch { return coordinatesToPlace(point); }
+  };
   const pick = async (point: MapPoint) => {
     try { selectPlace(await api<Place>(`/geocoding/reverse?lat=${point.lat}&lng=${point.lng}`)); }
     catch { selectPlace(coordinatesToPlace(point)); setMessage("Ubicación elegida. No fue posible convertirla en dirección legible."); }
@@ -83,9 +88,10 @@ export default function ClientPage() {
         setOrigin(currentLocation);
         setQuote(null);
         setSelection("destination");
+        setLocationNotice(position.coords.accuracy > 100 ? `La señal GPS tiene una precisión aproximada de ${Math.round(position.coords.accuracy)} m. Revisa o arrastra el pin si es necesario.` : `Ubicación detectada (precisión aproximada de ${Math.round(position.coords.accuracy)} m).`);
         setMessage("Ubicación detectada. Ahora selecciona destino.");
       },
-      () => setMessage("No fue posible obtener tu ubicación. Selecciona el origen tocando el mapa."),
+      (error) => { const detail = error.code === error.PERMISSION_DENIED ? "No diste permiso de ubicación. Busca o toca el mapa para elegir el origen." : error.code === error.POSITION_UNAVAILABLE ? "No hay señal GPS disponible. Busca o toca el mapa para elegir el origen." : "La ubicación tardó demasiado. Inténtalo de nuevo o selecciona el origen manualmente."; setLocationNotice(detail); setMessage(detail); },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
   };
@@ -145,8 +151,8 @@ export default function ClientPage() {
     <Guard roles={["CLIENT"]}>
       <main className="mx-auto max-w-md p-4">
         <header className="flex items-center justify-between">
-          <b className="text-xl text-orange-500">MotoYa</b>
-          <div className="flex items-center gap-2"><span className="muted">Pasajero</span><ClientMenu /></div>
+          <div className="flex items-center gap-2"><ClientMenu /><b className="text-xl text-orange-500">MotoYa</b></div>
+          <span className="muted">Pasajero</span>
         </header>
 
         <AdvertisementCarousel />
@@ -167,13 +173,14 @@ export default function ClientPage() {
 
         <div id="buscar" className="scroll-mt-4"><LocationSearch onSelect={(place) => selectPlace(place)} /></div>
 
-        <p className="mt-3 text-sm font-medium">{selection === "origin" ? "Toca el mapa para elegir origen." : "Toca el mapa para elegir destino."}</p>
-        <section className="mt-3"><MapView origin={origin} destination={destination || undefined} focus={origin} onPick={pick} /></section>
+        <p className="mt-3 text-sm font-medium">{selection === "origin" ? "Toca el mapa o arrastra el pin verde para corregir el origen." : "Toca el mapa o arrastra el pin naranja para elegir destino."}</p>
+        {locationNotice && <p className="mt-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900" role="status">{locationNotice}</p>}
+        <section className="mt-3"><MapView origin={origin} destination={destination || undefined} focus={origin} onPick={pick} onOriginMove={async (point) => selectPlace(await interpretedPoint(point), "origin")} onDestinationMove={async (point) => selectPlace(await interpretedPoint(point), "destination")} /></section>
         <button onClick={locate} className="mt-3 w-full border">Usar mi ubicación actual</button>
 
         <section className="mt-3 space-y-3">
-          <section id="lugares" className="card scroll-mt-4"><b>Guardar ubicación</b><p className="muted mt-1">Ponle el nombre que quieras: casa, trabajo, mamá, universidad o cualquier referencia.</p><div className="mt-3 grid gap-2"><input maxLength={40} value={placeLabel} onChange={(event) => setPlaceLabel(event.target.value)} placeholder="Nombre del lugar" /><input maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Referencia opcional (ej. portón azul)" /><button className="primary" disabled={isSaving} onClick={() => saveFavorite(placeLabel)}>Guardar ubicación</button></div></section>
-          {favorites.length > 0 && <div className="card"><b>Lugares guardados</b>{favorites.map((place) => <div className="mt-2 flex gap-2" key={place.id}><button onClick={() => selectPlace(place)} className="w-full border text-left"><b>{place.label}</b><span className="muted block text-sm">{place.address}{place.reference ? ` · ${place.reference}` : ""}</span></button><button className="border px-3 text-red-600" aria-label={`Eliminar ${place.label}`} onClick={async () => { await api(`/places/${encodeURIComponent(place.label)}`, { method: "DELETE" }); loadFavorites(); }}>×</button></div>)}</div>}
+          <section id="lugares" className="card scroll-mt-4"><b>Guardar ubicación</b><p className="muted mt-1">Guarda Casa, Trabajo u otro lugar con el nombre que prefieras.</p><div className="mt-3 flex gap-2"><button className="border flex-1" onClick={() => setPlaceLabel("Casa")}>Casa</button><button className="border flex-1" onClick={() => setPlaceLabel("Trabajo")}>Trabajo</button></div><div className="mt-2 grid gap-2"><input maxLength={40} value={placeLabel} onChange={(event) => setPlaceLabel(event.target.value)} placeholder="Nombre del lugar" /><input maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Referencia opcional (ej. portón azul)" /><button className="primary" disabled={isSaving} onClick={() => saveFavorite(placeLabel)}>Guardar ubicación</button></div></section>
+          {favorites.length > 0 && <div className="card"><b>Lugares guardados</b>{favorites.map((place) => <div className="mt-2 rounded-xl border p-2" key={place.id}><b>{place.label}</b><span className="muted mt-1 block text-sm">{place.address}{place.reference ? ` · ${place.reference}` : ""}</span><div className="mt-2 flex gap-2"><button onClick={() => selectPlace(place, "origin")} className="border flex-1 py-2 text-sm">Usar origen</button><button onClick={() => selectPlace(place, "destination")} className="border flex-1 py-2 text-sm">Usar destino</button><button className="py-2 text-sm text-red-600" aria-label={`Eliminar ${place.label}`} onClick={async () => { await api(`/places/${encodeURIComponent(place.label)}`, { method: "DELETE" }); loadFavorites(); }}>Eliminar</button></div></div>)}</div>}
           {recents.length > 0 && <div id="recientes" className="card scroll-mt-4"><b>Destinos recientes</b>{recents.map((place) => <button key={place.address} onClick={() => selectPlace(place, "destination")} className="mt-2 w-full border text-left">{place.address}</button>)}</div>}
           {destination && <button onClick={estimate} className="w-full border">Calcular estimación</button>}
           {quote && <div className="card"><b>{quote.distanceKm} km · {quote.currency} {quote.estimatedPrice}</b><p className="muted">Precio estimado antes de solicitar.</p></div>}
