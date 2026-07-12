@@ -56,6 +56,7 @@ model User {
  ratingsGiven Rating[] @relation("RatingAuthor")
  ratingsReceived Rating[] @relation("RatingRider")
  auditLogs AuditLog[] @relation("AuditActor")
+ savedPlaces SavedPlace[]
 }
 model ClientProfile {
  id String @id @default(cuid())
@@ -154,4 +155,15 @@ model SystemSetting {
  key String @id
  value String
  updatedAt DateTime @updatedAt
+}
+model SavedPlace {
+ id String @id @default(cuid())
+ userId String
+ user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ label String
+ address String
+ lat Float
+ lng Float
+ createdAt DateTime @default(now())
+ @@unique([userId,label])
 }
