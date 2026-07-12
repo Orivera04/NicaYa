@@ -37,6 +37,12 @@ enum TripStatus {
  CANCELLED_BY_RIDER
  CANCELLED_BY_ADMIN
 }
+enum OfferStatus {
+ PENDING
+ ACCEPTED
+ REJECTED
+ EXPIRED
+}
 model User {
  id String @id @default(cuid())
  name String
@@ -57,6 +63,7 @@ model User {
  ratingsReceived Rating[] @relation("RatingRider")
  auditLogs AuditLog[] @relation("AuditActor")
  savedPlaces SavedPlace[]
+ riderOffers TripOffer[]
 }
 model ClientProfile {
  id String @id @default(cuid())
@@ -104,11 +111,31 @@ model Trip {
  destinationAddress String
  distanceKm Float
  estimatedPrice Decimal @db.Decimal(10,2)
+ proposedPrice Decimal? @db.Decimal(10,2)
+ finalPrice Decimal? @db.Decimal(10,2)
+ estimatedDurationMin Int
+ serviceCode String @default("MOTO")
+ expiresAt DateTime?
  currency String @default("USD")
  createdAt DateTime @default(now())
  updatedAt DateTime @updatedAt
  histories TripStatusHistory[]
  rating Rating?
+ offers TripOffer[]
+}
+model TripOffer {
+ id String @id @default(cuid())
+ tripId String
+ trip Trip @relation(fields:[tripId],references:[id],onDelete:Cascade)
+ riderId String
+ rider User @relation(fields:[riderId],references:[id],onDelete:Cascade)
+ amount Decimal @db.Decimal(10,2)
+ currency String @default("NIO")
+ status OfferStatus @default(PENDING)
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ @@index([tripId,status])
+ @@index([riderId,status])
 }
 model TripStatusHistory {
  id String @id @default(cuid())
