@@ -162,6 +162,7 @@ model SavedPlace {
  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
  label String
  address String
+ reference String?
  lat Float
  lng Float
  createdAt DateTime @default(now())

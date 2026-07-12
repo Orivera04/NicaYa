@@ -6,8 +6,9 @@ import { MapPoint, MapView } from "@/components/MapView";
 import { api } from "@/lib/api";
 import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
 import { ClientMenu } from "@/components/ClientMenu";
+import { LocationSearch } from "@/components/LocationSearch";
 
-type Place = MapPoint & { address: string };
+type Place = MapPoint & { address: string; reference?: string | null };
 type SavedPlace = Place & { id: string; label: string };
 type Quote = { distanceKm: number; estimatedPrice: number; currency: string };
 
@@ -27,6 +28,8 @@ export default function ClientPage() {
   const [favorites, setFavorites] = useState<SavedPlace[]>([]);
   const [recents, setRecents] = useState<Place[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [placeLabel, setPlaceLabel] = useState("");
+  const [reference, setReference] = useState("");
 
   const loadFavorites = () => api<SavedPlace[]>("/places").then(setFavorites).catch(() => undefined);
 
@@ -62,7 +65,10 @@ export default function ClientPage() {
     setMessage("Destino seleccionado. Calcula la estimación.");
   };
 
-  const pick = (point: MapPoint) => selectPlace(coordinatesToPlace(point));
+  const pick = async (point: MapPoint) => {
+    try { selectPlace(await api<Place>(`/geocoding/reverse?lat=${point.lat}&lng=${point.lng}`)); }
+    catch { selectPlace(coordinatesToPlace(point)); setMessage("Ubicación elegida. No fue posible convertirla en dirección legible."); }
+  };
 
   const locate = () => {
     if (!navigator.geolocation) {
@@ -70,8 +76,11 @@ export default function ClientPage() {
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setOrigin({ lat: position.coords.latitude, lng: position.coords.longitude, address: "Mi ubicación actual" });
+      async (position) => {
+        const point = { lat: position.coords.latitude, lng: position.coords.longitude };
+        let currentLocation: Place = { ...point, address: "Mi ubicación actual" };
+        try { currentLocation = await api<Place>(`/geocoding/reverse?lat=${point.lat}&lng=${point.lng}`); } catch { /* La ubicación sigue siendo utilizable por coordenadas. */ }
+        setOrigin(currentLocation);
         setQuote(null);
         setSelection("destination");
         setMessage("Ubicación detectada. Ahora selecciona destino.");
@@ -101,13 +110,14 @@ export default function ClientPage() {
     }
   };
 
-  const saveFavorite = async (label: "Casa" | "Trabajo") => {
+  const saveFavorite = async (label: string) => {
     const place = selection === "destination" && destination ? destination : origin;
+    if (!label.trim()) { setMessage("Escribe un nombre para guardar este lugar."); return; }
     setIsSaving(true);
     try {
-      await api(`/places/${label}`, { method: "PUT", body: JSON.stringify(place) });
+      await api(`/places/${encodeURIComponent(label.trim())}`, { method: "PUT", body: JSON.stringify({ ...place, reference: reference.trim() || null }) });
       await loadFavorites();
-      setMessage(`${label} guardado.`);
+      setPlaceLabel(""); setReference(""); setMessage(`${label.trim()} guardado.`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -141,7 +151,7 @@ export default function ClientPage() {
 
         <AdvertisementCarousel />
 
-        <section className="card mt-3">
+        <section id="viaje" className="card mt-3 scroll-mt-4">
           <div className="flex items-center justify-between gap-3">
             <b>Tu viaje</b>
             {destination && <button onClick={swapPlaces} className="border py-2 text-sm">⇅ Intercambiar</button>}
@@ -155,16 +165,15 @@ export default function ClientPage() {
           {destination && <button onClick={clearDestination} className="mt-2 w-full text-sm text-red-600">Limpiar destino</button>}
         </section>
 
+        <div id="buscar" className="scroll-mt-4"><LocationSearch onSelect={(place) => selectPlace(place)} /></div>
+
         <p className="mt-3 text-sm font-medium">{selection === "origin" ? "Toca el mapa para elegir origen." : "Toca el mapa para elegir destino."}</p>
         <section className="mt-3"><MapView origin={origin} destination={destination || undefined} focus={origin} onPick={pick} /></section>
         <button onClick={locate} className="mt-3 w-full border">Usar mi ubicación actual</button>
 
         <section className="mt-3 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <button className="border" disabled={isSaving} onClick={() => saveFavorite("Casa")}>Guardar Casa</button>
-            <button className="border" disabled={isSaving} onClick={() => saveFavorite("Trabajo")}>Guardar Trabajo</button>
-          </div>
-          {favorites.length > 0 && <div id="lugares" className="card scroll-mt-4"><b>Lugares guardados</b>{favorites.map((place) => <button key={place.id} onClick={() => selectPlace(place)} className="mt-2 w-full border text-left"><b>{place.label}</b><span className="muted block text-sm">{place.address}</span></button>)}</div>}
+          <section id="lugares" className="card scroll-mt-4"><b>Guardar ubicación</b><p className="muted mt-1">Ponle el nombre que quieras: casa, trabajo, mamá, universidad o cualquier referencia.</p><div className="mt-3 grid gap-2"><input maxLength={40} value={placeLabel} onChange={(event) => setPlaceLabel(event.target.value)} placeholder="Nombre del lugar" /><input maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Referencia opcional (ej. portón azul)" /><button className="primary" disabled={isSaving} onClick={() => saveFavorite(placeLabel)}>Guardar ubicación</button></div></section>
+          {favorites.length > 0 && <div className="card"><b>Lugares guardados</b>{favorites.map((place) => <div className="mt-2 flex gap-2" key={place.id}><button onClick={() => selectPlace(place)} className="w-full border text-left"><b>{place.label}</b><span className="muted block text-sm">{place.address}{place.reference ? ` · ${place.reference}` : ""}</span></button><button className="border px-3 text-red-600" aria-label={`Eliminar ${place.label}`} onClick={async () => { await api(`/places/${encodeURIComponent(place.label)}`, { method: "DELETE" }); loadFavorites(); }}>×</button></div>)}</div>}
           {recents.length > 0 && <div id="recientes" className="card scroll-mt-4"><b>Destinos recientes</b>{recents.map((place) => <button key={place.address} onClick={() => selectPlace(place, "destination")} className="mt-2 w-full border text-left">{place.address}</button>)}</div>}
           {destination && <button onClick={estimate} className="w-full border">Calcular estimación</button>}
           {quote && <div className="card"><b>{quote.distanceKm} km · {quote.currency} {quote.estimatedPrice}</b><p className="muted">Precio estimado antes de solicitar.</p></div>}
