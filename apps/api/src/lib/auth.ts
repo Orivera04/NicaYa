@@ -6,6 +6,6 @@ import type { AuthUser } from "../types.js";
 export const hashPassword=(value:string)=>bcrypt.hash(value,12);
 export const verifyPassword=(value:string,hash:string)=>bcrypt.compare(value,hash);
 export const hashToken=(token:string)=>crypto.createHash("sha256").update(token).digest("hex");
-export const makeTokens=(user:AuthUser)=>({ accessToken:jwt.sign(user,env.JWT_ACCESS_SECRET,{expiresIn:env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions["expiresIn"]}), refreshToken:jwt.sign(user,env.JWT_REFRESH_SECRET,{expiresIn:env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions["expiresIn"]}) });
+export const makeTokens=(user:AuthUser)=>({ accessToken:jwt.sign(user,env.JWT_ACCESS_SECRET,{expiresIn:env.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions["expiresIn"],jwtid:crypto.randomUUID()}), refreshToken:jwt.sign(user,env.JWT_REFRESH_SECRET,{expiresIn:env.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions["expiresIn"],jwtid:crypto.randomUUID()}) });
 export const readAccess=(token:string)=>jwt.verify(token,env.JWT_ACCESS_SECRET) as AuthUser;
 export const readRefresh=(token:string)=>jwt.verify(token,env.JWT_REFRESH_SECRET) as AuthUser;
