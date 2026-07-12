@@ -26,6 +26,14 @@
 - La aceptación debe conservar la condición `REQUESTED` y `riderId=null` dentro de una transacción. Nunca hacer "leer y luego actualizar" sin condición.
 - En Fase 1 un rider debe estar aprobado, disponible y sin viaje activo; la suscripción vuelve a ser obligatoria solo al habilitar una fase posterior.
 
+## Transacciones ACID
+
+- **Atomicidad:** crear una cuenta y su sesión, rotar un refresh token, publicar un viaje, aceptar una oferta y escribir su historial deben completarse juntos o revertirse juntos. Nunca notificar por Socket.io antes de confirmar la transacción.
+- **Consistencia:** la base impone claves únicas, relaciones y estados; el servicio valida tarifa, área operativa y transiciones antes de escribir. Una oferta aceptada cierra las demás ofertas pendientes en la misma transacción.
+- **Aislamiento:** usar transacciones `Serializable` para rotación de sesiones y decisiones competitivas. Las mutaciones críticas deben incluir condiciones de estado (`REQUESTED`, token no revocado) para impedir dobles aceptaciones o doble renovación.
+- **Durabilidad:** las migraciones versionadas se aplican antes de iniciar la API. Auditorías, historial de estados y ofertas se guardan en PostgreSQL; el frontend y Socket.io solo reflejan datos confirmados.
+- Los trabajos externos (notificaciones, geocodificación) no deben formar parte de una transacción de negocio larga. Primero confirmar la operación y después notificar de manera idempotente.
+
 ## Datos, migraciones y configuración
 
 - Toda evolución de Prisma requiere migración versionada y seed idempotente.
