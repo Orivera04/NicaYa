@@ -24,7 +24,7 @@
 - Usar REST para mutar/leer; Socket.io solo notifica cambios tras una operación exitosa.
 - Respetar la máquina de estados. Añadir una transición implica actualizar servicio, pruebas e historial.
 - La aceptación debe conservar la condición `REQUESTED` y `riderId=null` dentro de una transacción. Nunca hacer "leer y luego actualizar" sin condición.
-- Un rider debe estar aprobado, disponible, suscrito y sin viaje activo antes de aceptar.
+- En Fase 1 un rider debe estar aprobado, disponible y sin viaje activo; la suscripción vuelve a ser obligatoria solo al habilitar una fase posterior.
 
 ## Datos, migraciones y configuración
 
@@ -37,7 +37,14 @@
 - Mantener el formato `{ error: { code, message, details } }`; no exponer stack traces.
 - Incluir `requestId` en logs estructurados y auditar acciones administrativas.
 - Probar registro/login, roles, suscripción, aceptación doble, transiciones, cancelación y calificación antes de modificar el flujo.
-- Ejecutar `npm run lint`, `npm run typecheck` y `npm run test` antes de un commit.
+- Ejecutar `pnpm lint`, `pnpm typecheck` y `pnpm test` antes de un commit.
+
+## Operación y despliegue
+
+- Configurar CORS exclusivamente con la URL pública de la web; nunca usar comodines en producción.
+- Usar secretos distintos para cada entorno y rotarlos si se exponen en una conversación, captura o log.
+- Mantener las migraciones en Git y aplicar `prisma migrate deploy` durante el arranque de la API.
+- El plan gratuito de Render puede detener servicios inactivos; no debe considerarse infraestructura de producción.
 
 ## Ejecución
 

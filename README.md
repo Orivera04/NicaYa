@@ -59,6 +59,14 @@ Solo son datos de desarrollo. El seed incorpora además un rider pendiente.
 
 Access token JWT, refresh token rotativo y almacenado como hash, contraseñas con bcrypt, validación Zod, Helmet, rate limit, CORS configurable, autorización por rol y errores sin stack trace. Para producción se recomienda refresh token en cookie `httpOnly`, un proveedor de secretos y HTTPS.
 
+### Despliegue en Render
+
+La API se publica en Render junto con PostgreSQL; la web se publica como un segundo servicio. Configura `DATABASE_URL`, secretos JWT únicos, `CORS_ORIGIN` con la URL exacta de la web y las variables `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_SOCKET_URL` en la web. Ejecuta migraciones con `prisma migrate deploy` antes de servir tráfico. Nunca reutilices credenciales o secretos compartidos por chat: rótalos inmediatamente desde Render.
+
+### Fase 1 comercial
+
+Durante captación, los riders aprobados reciben viajes sin suscripción obligatoria ni comisión. Las tarifas y la futura configuración de planes permanecen en `SystemSetting`; no se deben hardcodear. El registro de rider requiere cédula, licencia y vehículo, y debe pasar revisión administrativa antes de quedar disponible.
+
 ## Limitaciones del MVP
 
 El selector de mapa muestra la experiencia y admite coordenadas/direcciones manuales; la abstracción de ubicación está preparada para integrar geocoding/rutas después. No incluye pagos reales, chat, GPS en segundo plano, push, rutas avanzadas ni app móvil nativa.
