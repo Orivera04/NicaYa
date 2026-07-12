@@ -8,7 +8,7 @@
 CREATE TYPE "OfferStatus" AS ENUM ('PENDING', 'ACCEPTED', 'REJECTED', 'EXPIRED');
 
 -- AlterTable
-ALTER TABLE "Trip" ADD COLUMN     "estimatedDurationMin" INTEGER NOT NULL,
+ALTER TABLE "Trip" ADD COLUMN     "estimatedDurationMin" INTEGER NOT NULL DEFAULT 1,
 ADD COLUMN     "expiresAt" TIMESTAMP(3),
 ADD COLUMN     "finalPrice" DECIMAL(10,2),
 ADD COLUMN     "proposedPrice" DECIMAL(10,2),
