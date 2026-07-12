@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc --noCheck",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --ext .ts",
     "test": "jest --runInBand",
