@@ -4,9 +4,9 @@ import type { LatLngLiteral, Map as LeafletMap } from "leaflet";
 
 export type MapPoint = LatLngLiteral & { label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onRequestClick?: (id: string) => void };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; focus?: MapPoint; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onRequestClick?: (id: string) => void };
 
-export function MapView({ origin, destination, rider, requests = [], onPick, onRequestClick }: Props) {
+export function MapView({ origin, destination, rider, focus, requests = [], onPick, onRequestClick }: Props) {
   const host = useRef<HTMLDivElement>(null); const map = useRef<LeafletMap | null>(null); const props = useRef({ origin, destination, rider, requests, onPick, onRequestClick });
   props.current = { origin, destination, rider, requests, onPick, onRequestClick };
   const draw = () => { if (!map.current) return; import("leaflet").then(({ default: L }) => { const instance = map.current!; instance.eachLayer(layer => { if (layer instanceof L.CircleMarker || layer instanceof L.Polyline) instance.removeLayer(layer); }); const current = props.current; const add = (p: MapPoint | undefined, color: string, text: string) => p && L.circleMarker(p, { radius: 10, color, fillColor: color, fillOpacity: .9, weight: 3 }).addTo(instance).bindTooltip(text); add(current.origin, "#16a34a", "Origen"); add(current.destination, "#f97316", "Destino"); add(current.rider, "#2563eb", "Tu ubicación"); if (current.origin && current.destination) L.polyline([current.origin, current.destination], { color: "#f97316", dashArray: "6 8" }).addTo(instance); current.requests.forEach(r => L.circleMarker(r, { radius: 9, color: "#7c3aed", fillColor: "#a855f7", fillOpacity: .9 }).addTo(instance).bindTooltip(r.title).on("click", () => props.current.onRequestClick?.(r.id))); }); };
@@ -15,6 +15,6 @@ export function MapView({ origin, destination, rider, requests = [], onPick, onR
       instance.on("click", (event) => props.current.onPick?.({ lat: event.latlng.lat, lng: event.latlng.lng, label: "Ubicación seleccionada" })); draw(); cleanup = () => instance.remove();
     }); return () => { active = false; cleanup(); map.current = null; };
   }, []);
-  useEffect(() => { draw(); }, [origin, destination, rider, requests, onRequestClick]);
+  useEffect(() => { draw(); if (map.current && focus) map.current.flyTo(focus, 15, { animate: true }); }, [origin, destination, rider, focus, requests, onRequestClick]);
   return <div ref={host} className="h-72 w-full overflow-hidden rounded-2xl bg-slate-200" aria-label="Mapa interactivo" />;
 }
