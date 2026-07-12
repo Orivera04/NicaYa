@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Guard } from "@/components/Guard";
 import { MapPoint, MapView } from "@/components/MapView";
 import { api } from "@/lib/api";
+import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
+import { ClientMenu } from "@/components/ClientMenu";
 
 type Place = MapPoint & { address: string };
 type SavedPlace = Place & { id: string; label: string };
@@ -134,8 +136,10 @@ export default function ClientPage() {
       <main className="mx-auto max-w-md p-4">
         <header className="flex items-center justify-between">
           <b className="text-xl text-orange-500">MotoYa</b>
-          <span className="muted">Pasajero</span>
+          <div className="flex items-center gap-2"><span className="muted">Pasajero</span><ClientMenu /></div>
         </header>
+
+        <AdvertisementCarousel />
 
         <section className="card mt-3">
           <div className="flex items-center justify-between gap-3">
@@ -160,8 +164,8 @@ export default function ClientPage() {
             <button className="border" disabled={isSaving} onClick={() => saveFavorite("Casa")}>Guardar Casa</button>
             <button className="border" disabled={isSaving} onClick={() => saveFavorite("Trabajo")}>Guardar Trabajo</button>
           </div>
-          {favorites.length > 0 && <div className="card"><b>Lugares guardados</b>{favorites.map((place) => <button key={place.id} onClick={() => selectPlace(place)} className="mt-2 w-full border text-left"><b>{place.label}</b><span className="muted block text-sm">{place.address}</span></button>)}</div>}
-          {recents.length > 0 && <div className="card"><b>Destinos recientes</b>{recents.map((place) => <button key={place.address} onClick={() => selectPlace(place, "destination")} className="mt-2 w-full border text-left">{place.address}</button>)}</div>}
+          {favorites.length > 0 && <div id="lugares" className="card scroll-mt-4"><b>Lugares guardados</b>{favorites.map((place) => <button key={place.id} onClick={() => selectPlace(place)} className="mt-2 w-full border text-left"><b>{place.label}</b><span className="muted block text-sm">{place.address}</span></button>)}</div>}
+          {recents.length > 0 && <div id="recientes" className="card scroll-mt-4"><b>Destinos recientes</b>{recents.map((place) => <button key={place.address} onClick={() => selectPlace(place, "destination")} className="mt-2 w-full border text-left">{place.address}</button>)}</div>}
           {destination && <button onClick={estimate} className="w-full border">Calcular estimación</button>}
           {quote && <div className="card"><b>{quote.distanceKm} km · {quote.currency} {quote.estimatedPrice}</b><p className="muted">Precio estimado antes de solicitar.</p></div>}
           <button onClick={requestRide} className="primary w-full" disabled={!quote}>Solicitar moto</button>

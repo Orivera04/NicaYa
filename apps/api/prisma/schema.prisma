@@ -167,3 +167,18 @@ model SavedPlace {
  createdAt DateTime @default(now())
  @@unique([userId,label])
 }
+model Advertisement {
+ id String @id @default(cuid())
+ title String
+ description String?
+ imageUrl String?
+ actionLabel String?
+ actionUrl String?
+ backgroundColor String @default("#f97316")
+ textColor String @default("#ffffff")
+ displayOrder Int @default(0)
+ active Boolean @default(true)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ @@index([active,displayOrder])
+}
