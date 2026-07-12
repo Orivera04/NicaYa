@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc --noCheck",
-    "start": "prisma migrate resolve --rolled-back 20260712181103_trip_offers_and_services || true; prisma migrate deploy && node dist/src/server.js",
+    "start": "prisma migrate deploy && node dist/src/server.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --ext .ts",
     "test": "jest --runInBand",
