@@ -45,5 +45,5 @@ export function MapView({ origin, destination, rider, focus, requests = [], onPi
     return () => { active = false; cleanup(); map.current = null; };
   }, []);
   useEffect(() => { draw(); if (map.current && focus) map.current.flyTo(focus, 15, { animate: true }); }, [origin, destination, rider, focus, requests, onOriginMove, onDestinationMove, onRequestClick]);
-  return <div ref={host} className="h-72 w-full overflow-hidden rounded-2xl bg-slate-200" aria-label="Mapa interactivo" />;
+  return <div ref={host} className="relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200" aria-label="Mapa interactivo" />;
 }
