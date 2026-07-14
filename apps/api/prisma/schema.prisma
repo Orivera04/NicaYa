@@ -52,6 +52,26 @@ enum PaymentStatus {
 enum PaymentMethod {
  POINT_EXPRESS
 }
+enum SubscriptionOrderStatus {
+ CREATED
+ PENDING_PAYMENT
+ PENDING_REVIEW
+ COMPLETED
+ EXPIRED
+ CANCELLED
+}
+enum SubscriptionPaymentStatus {
+ PENDING_PAYMENT
+ PENDING_REVIEW
+ APPROVED
+ REJECTED
+ EXPIRED
+ CANCELLED
+}
+enum SubscriptionPaymentMethodCode {
+ MOTO_EXPRESS
+ BANK_TRANSFER
+}
 model User {
  id String @id @default(cuid())
  name String
@@ -92,6 +112,7 @@ model RiderProfile {
  documentsVerifiedAt DateTime?
  subscriptions RiderSubscription[]
  subscriptionPayments SubscriptionPayment[]
+ subscriptionOrders SubscriptionOrder[]
 }
 model RiderSubscription {
  id String @id @default(cuid())
@@ -105,6 +126,79 @@ model RiderSubscription {
  activatedById String?
  activatedBy User? @relation("ActivatedBy",fields:[activatedById],references:[id])
  createdAt DateTime @default(now())
+ planId String?
+ plan SubscriptionPlan? @relation(fields:[planId],references:[id])
+ paymentId String? @unique
+ payment Payment? @relation(fields:[paymentId],references:[id])
+}
+model SubscriptionPlan {
+ id String @id @default(cuid())
+ code String @unique
+ name String
+ description String
+ price Decimal @db.Decimal(10,2)
+ currency String @default("NIO")
+ durationDays Int
+ benefits Json
+ isActive Boolean @default(true)
+ displayOrder Int @default(0)
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ subscriptions RiderSubscription[]
+ orders SubscriptionOrder[]
+ @@index([isActive,displayOrder])
+}
+model PaymentMethodConfig {
+ id String @id @default(cuid())
+ code SubscriptionPaymentMethodCode @unique
+ name String
+ instructions String
+ isActive Boolean @default(true)
+ configuration Json?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ payments Payment[]
+}
+model SubscriptionOrder {
+ id String @id @default(cuid())
+ riderId String
+ rider RiderProfile @relation(fields:[riderId],references:[id],onDelete:Restrict)
+ planId String
+ plan SubscriptionPlan @relation(fields:[planId],references:[id],onDelete:Restrict)
+ planNameSnapshot String
+ priceSnapshot Decimal @db.Decimal(10,2)
+ currencySnapshot String
+ durationDaysSnapshot Int
+ status SubscriptionOrderStatus @default(CREATED)
+ expiresAt DateTime
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ payments Payment[]
+ @@index([riderId,status])
+ @@index([status,expiresAt])
+}
+model Payment {
+ id String @id @default(cuid())
+ orderId String @unique
+ order SubscriptionOrder @relation(fields:[orderId],references:[id],onDelete:Restrict)
+ methodId String
+ method PaymentMethodConfig @relation(fields:[methodId],references:[id],onDelete:Restrict)
+ amount Decimal @db.Decimal(10,2)
+ currency String
+ status SubscriptionPaymentStatus @default(PENDING_PAYMENT)
+ externalReference String @unique
+ customerReference String?
+ proofReference String?
+ metadata Json?
+ submittedAt DateTime?
+ reviewedAt DateTime?
+ reviewedByAdminId String?
+ rejectionReason String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ subscription RiderSubscription?
+ @@index([status,createdAt])
+ @@index([methodId,status])
 }
 model SubscriptionPayment {
  id String @id @default(cuid())

@@ -1,2 +1,11 @@
-import { createServer } from "http"; import { Server } from "socket.io"; import jwt from "jsonwebtoken"; import { app } from "./app.js"; import { env } from "./config.js"; import { bootstrapAdmin } from "./bootstrap-admin.js";
-const server=createServer(app);const io=new Server(server,{cors:{origin:env.CORS_ORIGIN}});app.set("io",io);io.use((socket,next)=>{try{const token=socket.handshake.auth.token;const user=jwt.verify(token,env.JWT_ACCESS_SECRET) as {id:string;role:string};socket.data.user=user;next();}catch{next(new Error("UNAUTHENTICATED"));}});io.on("connection",s=>{const u=s.data.user;s.join(`user:${u.id}`);if(u.role==="RIDER")s.join("riders");if(u.role==="ADMIN")s.join("admins");});bootstrapAdmin().then(()=>server.listen(env.API_PORT,()=>console.log(`MotoYa API listening on :${env.API_PORT}`)));
+import { createServer } from "http";
+import { Server } from "socket.io";
+import jwt from "jsonwebtoken";
+import { app } from "./app.js";
+import { env } from "./config.js";
+import { bootstrapAdmin } from "./bootstrap-admin.js";
+import { ensureSubscriptionCatalog, expireSubscriptionData } from "./services/subscription.service.js";
+const server = createServer(app); const io = new Server(server, { cors: { origin: env.CORS_ORIGIN } }); app.set("io", io);
+io.use((socket, next) => { try { socket.data.user = jwt.verify(socket.handshake.auth.token, env.JWT_ACCESS_SECRET) as { id: string; role: string }; next(); } catch { next(new Error("UNAUTHENTICATED")); } });
+io.on("connection", (socket) => { const user = socket.data.user; socket.join(`user:${user.id}`); if (user.role === "RIDER") socket.join("riders"); if (user.role === "ADMIN") socket.join("admins"); });
+Promise.all([bootstrapAdmin(), ensureSubscriptionCatalog(), expireSubscriptionData()]).then(() => { setInterval(() => void expireSubscriptionData(), 15 * 60_000); server.listen(env.API_PORT, () => console.log(`MotoYa API listening on :${env.API_PORT}`)); });
