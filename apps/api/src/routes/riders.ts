@@ -1,10 +1,15 @@
 import { Router } from "express";
+import crypto from "crypto";
+import { z } from "zod";
 import { availabilitySchema } from "@motoya/shared";
 import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
+import { getSettings } from "../services/settings.service.js";
 export const ridersRouter=Router(); ridersRouter.use(authenticate,authorize("RIDER"));
 ridersRouter.get("/me",async(req,res)=>res.json(await prisma.riderProfile.findUnique({where:{userId:req.user!.id},include:{subscriptions:{orderBy:{createdAt:"desc"}}}})));
 ridersRouter.patch("/me",async(req,res)=>res.json(await prisma.riderProfile.update({where:{userId:req.user!.id},data:{vehiclePlate:req.body.vehiclePlate,vehicleModel:req.body.vehicleModel,nationalId:req.body.nationalId,driverLicense:req.body.driverLicense}})));
 ridersRouter.patch("/me/availability",async(req,res)=>{const d=availabilitySchema.parse(req.body);const p=await prisma.riderProfile.update({where:{userId:req.user!.id},data:{available:d.available}});req.app.get("io")?.to("admins").emit("rider:availability-updated",p);res.json(p);});
 ridersRouter.get("/me/subscription",async(req,res)=>res.json(await prisma.riderSubscription.findFirst({where:{rider:{userId:req.user!.id}},orderBy:{createdAt:"desc"}})));
+ridersRouter.get("/me/subscription/payments",async(req,res)=>res.json(await prisma.subscriptionPayment.findMany({where:{rider:{userId:req.user!.id}},orderBy:{createdAt:"desc"},take:10})));
+ridersRouter.post("/me/subscription/payments",async(req,res)=>{const d=z.object({amount:z.number().positive().optional()}).parse(req.body);const rider=await prisma.riderProfile.findUniqueOrThrow({where:{userId:req.user!.id}});const settings=await getSettings();const amount=d.amount??Number(settings.monthlySubscriptionPrice);if(amount<Number(settings.monthlySubscriptionPrice))return res.status(422).json({error:{code:"INVALID_PAYMENT_AMOUNT",message:`El monto mínimo es ${settings.monthlySubscriptionPrice} ${settings.currency}.`}});const payment=await prisma.subscriptionPayment.create({data:{riderId:rider.id,reference:String(crypto.randomInt(100000,1000000)),amount,currency:settings.currency,expiresAt:new Date(Date.now()+60*60_000)}});res.status(201).json(payment);});
 ridersRouter.get("/available-trips",async(_req,res)=>res.json(await prisma.trip.findMany({where:{status:"REQUESTED",expiresAt:{gt:new Date()}},orderBy:{createdAt:"desc"},take:30})));
