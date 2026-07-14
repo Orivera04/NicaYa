@@ -5,7 +5,7 @@ import { Guard } from "@/components/Guard";
 import { MapPoint, MapView } from "@/components/MapView";
 import { api } from "@/lib/api";
 import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
-import { ClientMenu } from "@/components/ClientMenu";
+import { MobileAppShell } from "@/components/MobileAppShell";
 import { LocationSearch } from "@/components/LocationSearch";
 
 type Place = MapPoint & { address: string; reference?: string | null };
@@ -46,8 +46,7 @@ export default function ClientPage() {
   const cancel = async () => { if (!tripId) return; try { await api(`/trips/${tripId}/cancel`, { method: "POST" }); setRequestState("cancelled"); setMessage("Solicitud cancelada."); } catch (error) { setMessage((error as Error).message); } };
   const save = async () => { const place = selection === "destination" && destination ? destination : origin; if (!label.trim()) { setMessage("Escribe un nombre para guardar la ubicación."); return; } try { await api(`/places/${encodeURIComponent(label.trim())}`, { method: "PUT", body: JSON.stringify({ ...place, reference: reference.trim() || null }) }); setLabel(""); setReference(""); loadFavorites(); } catch (error) { setMessage((error as Error).message); } };
 
-  return <Guard roles={["CLIENT"]}><main className="mx-auto max-w-md p-4">
-    <header className="flex items-center justify-between"><div className="flex items-center gap-2"><ClientMenu /><b className="text-xl text-orange-500">MotoYa</b></div><span className="muted">Pasajero</span></header>
+  return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT">
     <AdvertisementCarousel />
     <section id="viaje" className="card mt-3 scroll-mt-4"><div className="flex items-center justify-between"><b>Tu viaje</b><div className="flex gap-2"><button className="border py-2 text-sm" onClick={() => setPanelExpanded(!panelExpanded)}>{panelExpanded ? "Contraer" : "Expandir"}</button>{destination && <button className="border py-2 text-sm" onClick={() => { setOrigin(destination); setDestination(origin); setQuote(null); }}>⇅</button>}</div></div>{panelExpanded && <><button className={`mt-3 w-full text-left ${selection === "origin" ? "ring-2 ring-orange-400" : "border"}`} onClick={() => setSelection("origin")}><span className="muted block text-xs">Origen</span>{origin.address}</button><button className={`mt-2 w-full text-left ${selection === "destination" ? "ring-2 ring-orange-400" : "border"}`} onClick={() => setSelection("destination")}><span className="muted block text-xs">Destino</span>{destination?.address || "Toca el mapa para seleccionarlo"}</button></>}</section>
     <div id="buscar" className="scroll-mt-4"><LocationSearch onSelect={(place) => selectPlace(place)} /></div>
@@ -66,5 +65,5 @@ export default function ClientPage() {
       {requestState === "sending" && <p className="card">Enviando solicitud…</p>}{requestState === "searching" && <section className="card"><b>Buscando riders</b><p className="muted">La solicitud vence en 5 minutos.</p>{offers.map((offer) => <div className="mt-2 rounded-xl border p-3" key={offer.id}><b>{offer.rider.name}: {offer.currency} {offer.amount}</b><button className="primary mt-2 w-full" onClick={() => acceptOffer(offer.id)}>Aceptar oferta</button></div>)}<button className="mt-3 w-full text-red-600" onClick={cancel}>Cancelar solicitud</button></section>}{requestState === "accepted" && <p className="card text-green-700">Rider asignado. Espera su llegada.</p>}{requestState === "cancelled" && <button className="primary w-full" onClick={() => { setTripId(null); setRequestState("idle"); }}>Solicitar otra moto</button>}
       {message && <p className="text-sm" role="status">{message}</p>}
     </section>
-  </main></Guard>;
+  </MobileAppShell></Guard>;
 }
