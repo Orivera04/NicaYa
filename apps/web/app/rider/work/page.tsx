@@ -1,0 +1,8 @@
+"use client";
+import { useEffect,useState } from "react";
+import { Guard } from "@/components/Guard";
+import { MobileAppShell } from "@/components/MobileAppShell";
+import { MapView,MapPoint } from "@/components/MapView";
+import { api } from "@/lib/api";
+type Trip={id:string;originAddress:string;destinationAddress:string;originLat:number;originLng:number;estimatedPrice:string;currency:string};
+export default function RiderWorkPage(){const [position,setPosition]=useState<MapPoint>({lat:12.1364,lng:-86.2514});const [trips,setTrips]=useState<Trip[]>([]);const [message,setMessage]=useState("");const load=()=>api<Trip[]>("/riders/available-trips").then(setTrips).catch(e=>setMessage(e.message));useEffect(()=>{load();navigator.geolocation?.getCurrentPosition(p=>setPosition({lat:p.coords.latitude,lng:p.coords.longitude}))},[]);return <Guard roles={["RIDER"]}><MobileAppShell role="RIDER"><h1 className="mt-4 text-2xl font-bold">Zona de trabajo</h1><p className="muted">Solicitudes cercanas a tu ubicacion.</p><div className="mt-3"><MapView rider={position} focus={position} requests={trips.map(t=>({id:t.id,lat:t.originLat,lng:t.originLng,title:t.originAddress,subtitle:t.destinationAddress}))}/></div>{trips.map(t=><article className="card mt-3" key={t.id}><b>{t.originAddress} → {t.destinationAddress}</b><p>{t.currency} {t.estimatedPrice}</p><button className="primary mt-2 w-full" onClick={async()=>{await api(`/trips/${t.id}/accept`,{method:"POST"});setMessage("Viaje aceptado.");load()}}>Aceptar tarifa</button></article>)}{message?<p className="mt-3 text-sm">{message}</p>:null}</MobileAppShell></Guard>}

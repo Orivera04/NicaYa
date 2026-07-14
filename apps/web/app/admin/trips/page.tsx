@@ -1,0 +1,4 @@
+"use client";
+import{useEffect,useState}from"react";import{Guard}from"@/components/Guard";import{MobileAppShell}from"@/components/MobileAppShell";import{api}from"@/lib/api";
+type Trip={id:string;status:string;originAddress:string;destinationAddress:string;estimatedPrice:string;currency:string;client:{name:string};rider?:{name:string}|null};
+export default function AdminTripsPage(){const[trips,setTrips]=useState<Trip[]>([]);useEffect(()=>{api<Trip[]>("/admin/trips").then(setTrips).catch(()=>undefined)},[]);return <Guard roles={["ADMIN"]}><MobileAppShell role="ADMIN"><h1 className="mt-4 text-2xl font-bold">Viajes</h1>{trips.map(t=><article className="card mt-3" key={t.id}><div className="flex justify-between"><b>{t.status}</b><b>{t.currency} {t.estimatedPrice}</b></div><p>{t.originAddress} → {t.destinationAddress}</p><p className="muted">{t.client.name} · {t.rider?.name||"Sin rider"}</p></article>)}</MobileAppShell></Guard>}
