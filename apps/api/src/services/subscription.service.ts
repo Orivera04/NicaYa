@@ -91,7 +91,7 @@ export async function expireSubscriptionData() {
 export async function assertRiderCanOperate(userId: string) {
   const now = new Date();
   const rider = await prisma.riderProfile.findUnique({ where: { userId }, include: { user: true, subscriptions: { where: { status: "ACTIVE", startsAt: { lte: now }, expiresAt: { gt: now } }, take: 1 } } });
-  if (!rider || rider.approval !== "APPROVED") fail(403, "RIDER_NOT_APPROVED", "Tu cuenta aun no esta aprobada.");
+  if (!rider || rider.approval !== "APPROVED" || rider.onboardingStatus !== "READY_TO_WORK") fail(403, "RIDER_NOT_READY", "Completa la activacion de tu cuenta antes de trabajar.");
   if (rider.user.status !== "ACTIVE") fail(403, "ACCOUNT_INACTIVE", "Tu cuenta no esta activa.");
   const settings = await prisma.systemSetting.findUnique({ where: { key: "subscriptionRequiredForRiders" } });
   if (settings?.value !== "false" && rider.subscriptions.length === 0) fail(403, "SUBSCRIPTION_REQUIRED", "Necesitas una suscripcion activa para operar.");

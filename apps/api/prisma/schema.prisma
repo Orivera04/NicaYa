@@ -20,6 +20,42 @@ enum RiderApproval {
  APPROVED
  REJECTED
 }
+enum ClientActivationStatus {
+ REGISTERED
+ SEMI_ACTIVE
+ VERIFICATION_PENDING
+ ACTIVE
+ REQUIRES_CORRECTION
+ SUSPENDED
+ REJECTED
+ DEACTIVATED
+}
+enum RiderOnboardingStatus {
+ REGISTERED
+ PROFILE_INCOMPLETE
+ DOCUMENTS_PENDING
+ UNDER_REVIEW
+ REQUIRES_CORRECTION
+ REJECTED
+ APPROVED
+ SUBSCRIPTION_REQUIRED
+ READY_TO_WORK
+}
+enum RiderDocumentType {
+ NATIONAL_ID
+ DRIVER_LICENSE
+ VEHICLE_REGISTRATION
+}
+enum RiderDocumentStatus {
+ NOT_SUBMITTED
+ SUBMITTED
+ UNDER_REVIEW
+ APPROVED
+ REJECTED
+ REQUIRES_CORRECTION
+ EXPIRED
+ EXPIRING_SOON
+}
 enum SubscriptionStatus { 
  PENDING
  ACTIVE
@@ -98,6 +134,10 @@ model ClientProfile {
  id String @id @default(cuid())
  userId String @unique
  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+ activationStatus ClientActivationStatus @default(SEMI_ACTIVE)
+ phoneVerifiedAt DateTime?
+ identityVerifiedAt DateTime?
+ verificationNote String?
 }
 model RiderProfile {
  id String @id @default(cuid())
@@ -110,9 +150,29 @@ model RiderProfile {
  nationalId String?
  driverLicense String?
  documentsVerifiedAt DateTime?
+ onboardingStatus RiderOnboardingStatus @default(PROFILE_INCOMPLETE)
+ workZoneConfigured Boolean @default(false)
+ onboardingNote String?
+ documents RiderDocument[]
  subscriptions RiderSubscription[]
  subscriptionPayments SubscriptionPayment[]
  subscriptionOrders SubscriptionOrder[]
+}
+model RiderDocument {
+ id String @id @default(cuid())
+ riderId String
+ rider RiderProfile @relation(fields:[riderId],references:[id],onDelete:Cascade)
+ type RiderDocumentType
+ status RiderDocumentStatus @default(NOT_SUBMITTED)
+ reference String?
+ expiresAt DateTime?
+ reviewedAt DateTime?
+ reviewedById String?
+ rejectionReason String?
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ @@unique([riderId,type])
+ @@index([status,expiresAt])
 }
 model RiderSubscription {
  id String @id @default(cuid())
