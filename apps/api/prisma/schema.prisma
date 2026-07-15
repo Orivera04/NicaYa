@@ -159,9 +159,21 @@ model RiderProfile {
  documentsSubmittedAt DateTime?
  onboardingNote String?
  documents RiderDocument[]
+ workZoneHistory WorkZoneHistory[]
  subscriptions RiderSubscription[]
  subscriptionPayments SubscriptionPayment[]
  subscriptionOrders SubscriptionOrder[]
+}
+model WorkZoneHistory {
+ id String @id @default(cuid())
+ riderId String
+ rider RiderProfile @relation(fields:[riderId],references:[id],onDelete:Cascade)
+ department String
+ lat Float
+ lng Float
+ reason String
+ createdAt DateTime @default(now())
+ @@index([riderId,createdAt])
 }
 model RiderDocument {
  id String @id @default(cuid())
