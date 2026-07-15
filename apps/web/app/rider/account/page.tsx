@@ -1,0 +1,8 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Guard } from "@/components/Guard";
+import { MobileAppShell } from "@/components/MobileAppShell";
+import { api, getSession } from "@/lib/api";
+type Profile = { approval: string; available: boolean; nationalId?: string | null; driverLicense?: string | null; vehicleModel?: string | null; vehiclePlate?: string | null };
+export default function RiderAccountPage() { const [profile, setProfile] = useState<Profile | null>(null); useEffect(() => { api<Profile>("/riders/me").then(setProfile).catch(() => undefined); }, []); const user = getSession()?.user; const approved = profile?.approval === "APPROVED"; return <Guard roles={["RIDER"]}><MobileAppShell role="RIDER"><h1 className="mt-4 text-2xl font-bold">Mi cuenta rider</h1><section className="card mt-3"><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Estado de verificacion</p><b className={`mt-1 block text-xl ${approved ? "text-emerald-700" : "text-amber-700"}`}>{approved ? "Validado y listo para operar" : "Pendiente de revision"}</b><p className="muted mt-2">El administrador debe aprobar tus documentos antes de que puedas activarte.</p></section><section className="card mt-3"><b>{user?.name}</b><p className="muted">{user?.email}</p><dl className="mt-4 space-y-2 text-sm"><div className="flex justify-between"><dt>Licencia</dt><dd>{profile?.driverLicense || "Pendiente"}</dd></div><div className="flex justify-between"><dt>Vehiculo</dt><dd>{profile?.vehicleModel || "Pendiente"}</dd></div><div className="flex justify-between"><dt>Placa</dt><dd>{profile?.vehiclePlate || "Pendiente"}</dd></div></dl></section></MobileAppShell></Guard>; }
