@@ -10,21 +10,16 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  // Password managers may populate the form. A session is created only after
-  // the person explicitly activates the submit control (or presses Enter).
-  const submitIntent = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!submitIntent.current) {
-      setError("Confirma el inicio de sesion con el boton Entrar.");
-      return;
-    }
+  async function submit(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    if (!formRef.current) return;
 
     setLoading(true);
     setError("");
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formRef.current);
       const session = await api<Session>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
@@ -35,7 +30,6 @@ export default function LoginPage() {
       setError((cause as Error).message);
     } finally {
       setLoading(false);
-      submitIntent.current = false;
     }
   }
 
@@ -50,8 +44,8 @@ export default function LoginPage() {
 
       <form
         className="mt-7 space-y-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_55px_rgba(0,0,0,.28)]"
-        onKeyDown={(event) => { if (event.key === "Enter") submitIntent.current = true; }}
-        onSubmit={submit}
+        ref={formRef}
+        onSubmit={(event) => event.preventDefault()}
       >
         <label className="block text-sm font-semibold">Correo
           <input className="mt-1 border-white/15 bg-white/10 text-white placeholder:text-slate-400" name="email" type="email" autoComplete="email" placeholder="nombre@correo.com" required />
@@ -65,7 +59,7 @@ export default function LoginPage() {
           </div>
         </label>
         {error ? <p className="rounded-xl bg-red-500/15 p-3 text-sm text-red-200" role="alert">{error}</p> : null}
-        <button className="login-cta w-full" disabled={loading} onPointerDown={() => { submitIntent.current = true; }} type="submit">
+        <button className="login-cta w-full" disabled={loading} onClick={() => submit()} type="button">
           <span>{loading ? "Ingresando..." : "Entrar a MotoYa"}</span><span aria-hidden="true">&rarr;</span>
         </button>
       </form>
