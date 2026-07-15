@@ -134,7 +134,7 @@ model ClientProfile {
  id String @id @default(cuid())
  userId String @unique
  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
- activationStatus ClientActivationStatus @default(SEMI_ACTIVE)
+ activationStatus ClientActivationStatus @default(ACTIVE)
  phoneVerifiedAt DateTime?
  identityVerifiedAt DateTime?
  verificationNote String?
@@ -152,6 +152,11 @@ model RiderProfile {
  documentsVerifiedAt DateTime?
  onboardingStatus RiderOnboardingStatus @default(PROFILE_INCOMPLETE)
  workZoneConfigured Boolean @default(false)
+ workZoneDepartment String?
+ workZoneLat Float?
+ workZoneLng Float?
+ workZoneUpdatedAt DateTime?
+ documentsSubmittedAt DateTime?
  onboardingNote String?
  documents RiderDocument[]
  subscriptions RiderSubscription[]
@@ -165,6 +170,8 @@ model RiderDocument {
  type RiderDocumentType
  status RiderDocumentStatus @default(NOT_SUBMITTED)
  reference String?
+ frontImage String?
+ backImage String?
  expiresAt DateTime?
  reviewedAt DateTime?
  reviewedById String?

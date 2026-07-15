@@ -18,7 +18,7 @@ async function register(role: Role, body: unknown) {
   const data = registerSchema.parse(body);
   const passwordHash = await hashPassword(data.password);
   return prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({ data: { name: data.name, email: data.email, passwordHash, phone: data.phone, role, ...(role === "CLIENT" ? { clientProfile: { create: { activationStatus: "SEMI_ACTIVE" } } } : { riderProfile: { create: { onboardingStatus: "PROFILE_INCOMPLETE" } } }) } });
+    const user = await tx.user.create({ data: { name: data.name, email: data.email, passwordHash, phone: data.phone, role, ...(role === "CLIENT" ? { clientProfile: { create: { activationStatus: "ACTIVE" } } } : { riderProfile: { create: { onboardingStatus: "PROFILE_INCOMPLETE" } } }) } });
     const tokens = makeTokens({ id: user.id, role: user.role, email: user.email });
     await tx.refreshToken.create({ data: { tokenHash: hashToken(tokens.refreshToken), userId: user.id, expiresAt: expiry() } });
     return { user: userResponse(user), ...tokens };
