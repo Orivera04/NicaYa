@@ -1,6 +1,6 @@
-import { Router } from "express";
 import { z } from "zod";
 import { authenticate, authorize } from "../middleware/auth.js";
+import { safeRouter } from "../middleware/safe-router.js";
 
 type NominatimItem = { lat: string; lon: string; display_name: string };
 const nominatim = "https://nominatim.openstreetmap.org";
@@ -12,7 +12,7 @@ async function fromResponse(response: Response) {
 }
 const toPlace = (item: NominatimItem) => ({ lat: Number(item.lat), lng: Number(item.lon), address: item.display_name });
 
-export const geocodingRouter = Router();
+export const geocodingRouter = safeRouter();
 geocodingRouter.use(authenticate, authorize("CLIENT"));
 geocodingRouter.get("/search", async (req, res) => {
   const query = z.string().trim().min(3).max(120).parse(req.query.q);

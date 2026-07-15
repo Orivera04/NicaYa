@@ -1,4 +1,3 @@
-import { Router } from "express";
 import { z } from "zod";
 import { TripStatus } from "@prisma/client";
 import { ratingSchema, tripCreateSchema } from "@motoya/shared";
@@ -6,8 +5,9 @@ import { prisma } from "../db.js";
 import { fail } from "../lib/error.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/async-handler.js";
+import { safeRouter } from "../middleware/safe-router.js";
 import { acceptTrip,acceptOffer,cancelTrip,changeStatus,createTrip,estimate,makeOffer } from "../services/trip.service.js";
-export const tripsRouter=Router(); tripsRouter.use(authenticate);
+export const tripsRouter=safeRouter(); tripsRouter.use(authenticate);
 tripsRouter.post("/estimate",authorize("CLIENT"),async(req,res)=>{const d=tripCreateSchema.parse(req.body);res.json(await estimate(d.origin,d.destination));});
 tripsRouter.post("/",authorize("CLIENT"),asyncHandler(async(req,res)=>{const d=tripCreateSchema.parse(req.body);const trip=await createTrip(req.user!.id,d.origin,d.destination,d.serviceCode,d.proposedPrice);req.app.get("io")?.to("riders").emit("trip:requested",trip);res.status(201).json(trip);}));
 tripsRouter.get("/",async(req,res)=>{const where=req.user!.role==="CLIENT"?{clientId:req.user!.id}:req.user!.role==="RIDER"?{riderId:req.user!.id}:{};res.json(await prisma.trip.findMany({where,include:{client:true,rider:true,rating:true},orderBy:{createdAt:"desc"}}));});

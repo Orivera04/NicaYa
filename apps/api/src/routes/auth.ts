@@ -1,4 +1,3 @@
-import { Router } from "express";
 import { z } from "zod";
 import { Role } from "@prisma/client";
 import { loginSchema, registerSchema } from "@motoya/shared";
@@ -6,8 +5,9 @@ import { prisma } from "../db.js";
 import { hashPassword, hashToken, makeTokens, readRefresh, verifyPassword } from "../lib/auth.js";
 import { fail } from "../lib/error.js";
 import { authenticate } from "../middleware/auth.js";
+import { safeRouter } from "../middleware/safe-router.js";
 
-export const authRouter = Router();
+export const authRouter = safeRouter();
 const expiry = () => new Date(Date.now() + 7 * 864e5);
 const userResponse = (user: { id: string; name: string; email: string; role: Role }) => ({ id: user.id, name: user.name, email: user.email, role: user.role });
 async function issueSession(user: { id: string; name: string; email: string; role: Role }) {

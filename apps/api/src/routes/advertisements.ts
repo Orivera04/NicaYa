@@ -1,7 +1,7 @@
-import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
+import { safeRouter } from "../middleware/safe-router.js";
 
 const advertisementSchema = z.object({
   title: z.string().trim().min(2).max(80),
@@ -15,7 +15,7 @@ const advertisementSchema = z.object({
   active: z.boolean().default(true),
 });
 
-export const advertisementsRouter = Router();
+export const advertisementsRouter = safeRouter();
 
 advertisementsRouter.get("/", async (_req, res) => {
   res.json(await prisma.advertisement.findMany({ where: { active: true }, orderBy: [{ displayOrder: "asc" }, { createdAt: "desc" }] }));

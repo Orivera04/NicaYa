@@ -1,10 +1,10 @@
-import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { haversineKm } from "../lib/geo.js";
 import { fail } from "../lib/error.js";
-export const placesRouter=Router(); placesRouter.use(authenticate,authorize("CLIENT"));
+import { safeRouter } from "../middleware/safe-router.js";
+export const placesRouter=safeRouter(); placesRouter.use(authenticate,authorize("CLIENT"));
 const labelSchema=z.string().trim().min(1).max(40);
 const placeSchema=z.object({address:z.string().min(3),reference:z.string().trim().max(120).optional().nullable(),lat:z.number(),lng:z.number()});
 placesRouter.get("/",async(req,res)=>res.json(await prisma.savedPlace.findMany({where:{userId:req.user!.id},orderBy:{createdAt:"asc"}})));

@@ -1,4 +1,3 @@
-import { Router } from "express";
 import crypto from "crypto";
 import { z } from "zod";
 import { availabilitySchema } from "@motoya/shared";
@@ -6,7 +5,8 @@ import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { getSettings } from "../services/settings.service.js";
 import { assertRiderCanOperate } from "../services/subscription.service.js";
-export const ridersRouter=Router(); ridersRouter.use(authenticate,authorize("RIDER"));
+import { safeRouter } from "../middleware/safe-router.js";
+export const ridersRouter=safeRouter(); ridersRouter.use(authenticate,authorize("RIDER"));
 ridersRouter.get("/me",async(req,res)=>res.json(await prisma.riderProfile.findUnique({where:{userId:req.user!.id},include:{subscriptions:{orderBy:{createdAt:"desc"}}}})));
 ridersRouter.patch("/me",async(req,res)=>res.json(await prisma.riderProfile.update({where:{userId:req.user!.id},data:{vehiclePlate:req.body.vehiclePlate,vehicleModel:req.body.vehicleModel,nationalId:req.body.nationalId,driverLicense:req.body.driverLicense}})));
  ridersRouter.patch("/me/availability",async(req,res)=>{const d=availabilitySchema.parse(req.body);if(d.available)await assertRiderCanOperate(req.user!.id);const p=await prisma.riderProfile.update({where:{userId:req.user!.id},data:{available:d.available}});req.app.get("io")?.to("admins").emit("rider:availability-updated",p);res.json(p);});

@@ -1,10 +1,10 @@
-import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { createSubscriptionOrder, markMotoExpressPaid, reviewPayment, submitTransfer } from "../services/subscription.service.js";
+import { safeRouter } from "../middleware/safe-router.js";
 
-export const subscriptionsRouter = Router();
+export const subscriptionsRouter = safeRouter();
 subscriptionsRouter.use(authenticate);
 subscriptionsRouter.get("/plans", authorize("RIDER"), async (_req, res) => res.json(await prisma.subscriptionPlan.findMany({ where: { isActive: true }, orderBy: { displayOrder: "asc" } })));
 subscriptionsRouter.get("/methods", authorize("RIDER"), async (_req, res) => res.json(await prisma.paymentMethodConfig.findMany({ where: { isActive: true }, select: { code: true, name: true, instructions: true, configuration: true } })));

@@ -1,10 +1,10 @@
-import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { fail } from "../lib/error.js";
 import { authenticate,authorize } from "../middleware/auth.js";
 import { getSettings,updateSettings } from "../services/settings.service.js";
-export const adminRouter=Router(); adminRouter.use(authenticate,authorize("ADMIN"));
+import { safeRouter } from "../middleware/safe-router.js";
+export const adminRouter=safeRouter(); adminRouter.use(authenticate,authorize("ADMIN"));
 adminRouter.get("/dashboard",async(_req,res)=>{const [clients,riders,pending,activeSubs,requested,completed,cancelled,subs]=await Promise.all([prisma.user.count({where:{role:"CLIENT"}}),prisma.user.count({where:{role:"RIDER"}}),prisma.riderProfile.count({where:{approval:"PENDING"}}),prisma.riderSubscription.count({where:{status:"ACTIVE",expiresAt:{gt:new Date()}}}),prisma.trip.count({where:{status:"REQUESTED"}}),prisma.trip.count({where:{status:"COMPLETED"}}),prisma.trip.count({where:{status:{in:["CANCELLED_BY_CLIENT","CANCELLED_BY_RIDER","CANCELLED_BY_ADMIN"]}}}),prisma.riderSubscription.aggregate({_sum:{pricePaid:true},where:{status:"ACTIVE"}})]);res.json({clients,riders,pendingRiders:pending,activeSubscriptions:activeSubs,requestedTrips:requested,completedTrips:completed,cancelledTrips:cancelled,subscriptionRevenue:Number(subs._sum.pricePaid||0)});});
 adminRouter.get("/riders",async(_req,res)=>res.json(await prisma.user.findMany({where:{role:"RIDER"},include:{riderProfile:{include:{subscriptions:{orderBy:{createdAt:"desc"},take:1}}}},orderBy:{createdAt:"desc"}})));
 adminRouter.patch("/riders/:id/status",async(req,res)=>{const data=z.object({approval:z.enum(["PENDING","APPROVED","REJECTED"]).optional(),userStatus:z.enum(["ACTIVE","SUSPENDED","DISABLED"]).optional()}).parse(req.body);if(data.approval)await prisma.riderProfile.update({where:{userId:req.params.id},data:{approval:data.approval,documentsVerifiedAt:data.approval==="APPROVED"?new Date():undefined}});if(data.userStatus)await prisma.user.update({where:{id:req.params.id},data:{status:data.userStatus}});await prisma.auditLog.create({data:{actorId:req.user!.id,action:"RIDER_STATUS_UPDATED",entity:"User",entityId:req.params.id,metadata:data}});res.json(await prisma.user.findUnique({where:{id:req.params.id},include:{riderProfile:true}}));});
