@@ -6,7 +6,7 @@ import { fail } from "../lib/error.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/async-handler.js";
 import { safeRouter } from "../middleware/safe-router.js";
-import { acceptTrip,acceptOffer,cancelTrip,changeStatus,completeTripByClient,createTrip,estimate,makeOffer } from "../services/trip.service.js";
+import { acceptTrip,acceptOffer,cancelTrip,changeStatus,completeTripByClient,createTrip,estimate,makeOffer,rejectOffer } from "../services/trip.service.js";
 export const tripsRouter=safeRouter(); tripsRouter.use(authenticate);
 tripsRouter.post("/estimate",authorize("CLIENT"),async(req,res)=>{const d=tripCreateSchema.parse(req.body);res.json(await estimate(d.origin,d.destination));});
 tripsRouter.post("/",authorize("CLIENT"),asyncHandler(async(req,res)=>{const d=tripCreateSchema.parse(req.body);const trip=await createTrip(req.user!.id,d.origin,d.destination,d.serviceCode,d.proposedPrice);req.app.get("io")?.to("riders").emit("trip:requested",trip);res.status(201).json(trip);}));
@@ -17,6 +17,7 @@ tripsRouter.post("/:id/accept",authorize("RIDER"),async(req,res)=>{const t=await
 tripsRouter.post("/:id/offers",authorize("RIDER"),async(req,res)=>{const amount=z.number().positive().max(2000).parse(req.body.amount);const offer=await makeOffer(req.params.id,req.user!.id,amount);req.app.get("io")?.to(`user:${(await prisma.trip.findUniqueOrThrow({where:{id:req.params.id}})).clientId}`).emit("trip:offer",offer);res.status(201).json(offer);});
 tripsRouter.get("/:id/offers",authorize("CLIENT"),async(req,res)=>{const trip=await prisma.trip.findUnique({where:{id:req.params.id}});if(!trip||trip.clientId!==req.user!.id)fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");res.json(await prisma.tripOffer.findMany({where:{tripId:req.params.id,status:"PENDING",expiresAt:{gt:new Date()}},include:{rider:{select:{id:true,name:true}},},orderBy:{createdAt:"desc"}}));});
 tripsRouter.post("/:id/offers/:offerId/accept",authorize("CLIENT"),async(req,res)=>{const trip=await acceptOffer(req.params.id,req.params.offerId,req.user!.id);req.app.get("io")?.to(`user:${trip.riderId}`).emit("trip:accepted",trip);res.json(trip);});
+tripsRouter.post("/:id/offers/:offerId/reject",authorize("CLIENT"),async(req,res)=>{res.json(await rejectOffer(req.params.id,req.params.offerId,req.user!.id));});
 tripsRouter.patch("/:id/status",authorize("RIDER"),async(req,res)=>{const status=String(req.body.status) as TripStatus;const t=await changeStatus(req.params.id,req.user!.id,req.user!.role,status);req.app.get("io")?.to(`user:${t.clientId}`).emit("trip:status-updated",t);res.json(t);});
 tripsRouter.post("/:id/complete",authorize("CLIENT"),async(req,res)=>{const t=await completeTripByClient(req.params.id,req.user!.id);req.app.get("io")?.to(`user:${t.riderId}`).emit("trip:status-updated",t);req.app.get("io")?.to("admins").emit("trip:status-updated",t);res.json(t);});
 tripsRouter.post("/:id/cancel",async(req,res)=>{const t=await cancelTrip(req.params.id,req.user!.id,req.user!.role);req.app.get("io")?.to(`user:${t.clientId}`).emit("trip:cancelled",t);if(t.riderId)req.app.get("io")?.to(`user:${t.riderId}`).emit("trip:cancelled",t);res.json(t);});
