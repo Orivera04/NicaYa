@@ -10,8 +10,8 @@ const catalog = [
 
 export async function ensureSubscriptionCatalog() {
   await Promise.all(catalog.map((plan) => prisma.subscriptionPlan.upsert({ where: { code: plan.code }, update: {}, create: { ...plan, durationDays: 30, currency: "NIO" } })));
-  await prisma.paymentMethodConfig.upsert({ where: { code: "MOTO_EXPRESS" }, update: {}, create: { code: "MOTO_EXPRESS", name: "MotoSuscripcion Express", instructions: "Presenta tu referencia y realiza el pago exacto en un punto autorizado MotoYa.", configuration: { agreement: "MOTOYA" } } });
-  await prisma.paymentMethodConfig.upsert({ where: { code: "BANK_TRANSFER" }, update: {}, create: { code: "BANK_TRANSFER", name: "Transferencia bancaria", instructions: "Transfiere el monto exacto y registra la referencia para revision administrativa.", configuration: { bank: "Banco configurado por administracion", account: "Configurar cuenta bancaria" } } });
+  await prisma.paymentMethodConfig.upsert({ where: { code: "MOTO_EXPRESS" }, update: { name: "Deposito", instructions: "Deposita el monto exacto usando tu referencia y adjunta el comprobante para revision." }, create: { code: "MOTO_EXPRESS", name: "Deposito", instructions: "Deposita el monto exacto usando tu referencia y adjunta el comprobante para revision.", configuration: { holderName: "Configurar titular", bank: "Configurar banco receptor", account: "Configurar numero de cuenta" } } });
+  await prisma.paymentMethodConfig.upsert({ where: { code: "BANK_TRANSFER" }, update: { name: "Transferencia bancaria", instructions: "Transfiere el monto exacto y adjunta el comprobante para revision." }, create: { code: "BANK_TRANSFER", name: "Transferencia bancaria", instructions: "Transfiere el monto exacto y adjunta el comprobante para revision.", configuration: { holderName: "Configurar titular", bank: "Configurar banco receptor", account: "Configurar numero de cuenta" } } });
 }
 
 export async function createSubscriptionOrder(userId: string, planId: string, methodCode: "MOTO_EXPRESS" | "BANK_TRANSFER") {
@@ -33,7 +33,7 @@ async function ownedPayment(userId: string, paymentId: string) {
   return payment;
 }
 
-export async function submitTransfer(userId: string, paymentId: string, data: { bankName: string; transferReference: string; payerName?: string; proofReference?: string }) {
+export async function submitTransfer(userId: string, paymentId: string, data: { bankName: string; transferReference: string; payerName?: string; proofReference: string }) {
   const payment = await ownedPayment(userId, paymentId);
   if (payment.status !== "PENDING_PAYMENT") fail(409, "PAYMENT_NOT_SUBMITTABLE", "El pago no puede enviarse a revision.");
   return prisma.$transaction(async (tx) => {
@@ -43,11 +43,11 @@ export async function submitTransfer(userId: string, paymentId: string, data: { 
   }, { isolationLevel: "Serializable" });
 }
 
-export async function markMotoExpressPaid(userId: string, paymentId: string, proofReference?: string) {
+export async function markMotoExpressPaid(userId: string, paymentId: string, data: { bankName: string; proofReference: string }) {
   const payment = await ownedPayment(userId, paymentId);
   if (payment.status !== "PENDING_PAYMENT") fail(409, "PAYMENT_NOT_SUBMITTABLE", "El pago ya fue enviado.");
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.payment.update({ where: { id: payment.id }, data: { status: "PENDING_REVIEW", proofReference, submittedAt: new Date() } });
+    const updated = await tx.payment.update({ where: { id: payment.id }, data: { status: "PENDING_REVIEW", proofReference: data.proofReference, metadata: { bankName: data.bankName }, submittedAt: new Date() } });
     await tx.subscriptionOrder.update({ where: { id: payment.orderId }, data: { status: "PENDING_REVIEW" } });
     return updated;
   }, { isolationLevel: "Serializable" });
