@@ -45,6 +45,7 @@ enum RiderDocumentType {
  NATIONAL_ID
  DRIVER_LICENSE
  VEHICLE_REGISTRATION
+ INSURANCE
 }
 enum RiderDocumentStatus {
  NOT_SUBMITTED
@@ -147,6 +148,7 @@ model RiderProfile {
  available Boolean @default(false)
  vehiclePlate String?
  vehicleModel String?
+ insuranceExpiresAt DateTime?
  nationalId String?
  driverLicense String?
  documentsVerifiedAt DateTime?

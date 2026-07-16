@@ -16,5 +16,9 @@
     "db:migrate": "pnpm --filter @motoya/api prisma:migrate",
     "db:seed": "pnpm --filter @motoya/api prisma:seed"
   },
-  "devDependencies": { "concurrently": "^9.1.2" }
+  "devDependencies": {
+    "@eslint/js": "9.19.0",
+    "concurrently": "^9.1.2",
+    "typescript-eslint": "8.22.0"
+  }
 }
