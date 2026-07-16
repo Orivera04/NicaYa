@@ -23,6 +23,8 @@ export async function createSubscriptionOrder(userId: string, planId: string, me
   if (!receiver?.holderName?.trim() || !receiver?.bank?.trim() || !receiver?.account?.trim()) fail(409, "PAYMENT_ACCOUNT_NOT_CONFIGURED", "Administracion debe configurar titular, banco y cuenta antes de recibir pagos.");
   const reference = `MS-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
   return prisma.$transaction(async (tx) => {
+    const pending = await tx.subscriptionOrder.findFirst({ where: { riderId: rider.id, status: { in: ["PENDING_PAYMENT", "PENDING_REVIEW"] } }, include: { payments: true } });
+    if (pending) fail(409, "SUBSCRIPTION_ORDER_PENDING", "Ya tienes una solicitud de suscripción pendiente. Espera la validación antes de elegir otro plan.", { orderId: pending.id });
     const order = await tx.subscriptionOrder.create({ data: { riderId: rider.id, planId: plan.id, planNameSnapshot: plan.name, priceSnapshot: plan.price, currencySnapshot: plan.currency, durationDaysSnapshot: plan.durationDays, status: "PENDING_PAYMENT", expiresAt: new Date(Date.now() + 60 * 60_000) } });
     const payment = await tx.payment.create({ data: { orderId: order.id, methodId: method.id, amount: plan.price, currency: plan.currency, externalReference: reference, status: "PENDING_PAYMENT" } });
     return { order, payment, method: { code: method.code, name: method.name, instructions: method.instructions, configuration: method.configuration } };
@@ -73,6 +75,9 @@ export async function reviewPayment(paymentId: string, adminId: string, approved
     if (!changed.count) fail(409, "PAYMENT_ALREADY_REVIEWED", "El pago ya fue procesado.");
     await tx.subscriptionOrder.update({ where: { id: payment.orderId }, data: { status: "COMPLETED" } });
     const subscription = await tx.riderSubscription.create({ data: { riderId: payment.order.riderId, planId: payment.order.planId, paymentId, status: "ACTIVE", startsAt, expiresAt, pricePaid: payment.amount, currency: payment.currency, activatedById: adminId } });
+    const rider = await tx.riderProfile.findUnique({ where: { id: payment.order.riderId }, include: { documents: true, user: true } });
+    const ready = Boolean(rider && rider.approval === "APPROVED" && rider.workZoneConfigured && rider.user.status === "ACTIVE" && rider.documents.length === 4 && rider.documents.every((document) => document.status === "APPROVED") && rider.insuranceExpiresAt && rider.insuranceExpiresAt > now);
+    if (ready) await tx.riderProfile.update({ where: { id: payment.order.riderId }, data: { onboardingStatus: "READY_TO_WORK" } });
     await tx.auditLog.create({ data: { actorId: adminId, action: "SUBSCRIPTION_PAYMENT_APPROVED", entity: "Payment", entityId: paymentId, metadata: { subscriptionId: subscription.id } } });
     return { approved: true, subscription };
   }, { isolationLevel: "Serializable" });

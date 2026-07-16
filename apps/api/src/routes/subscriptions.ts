@@ -9,7 +9,7 @@ subscriptionsRouter.use(authenticate);
 subscriptionsRouter.get("/plans", authorize("RIDER"), async (_req, res) => res.json(await prisma.subscriptionPlan.findMany({ where: { isActive: true }, orderBy: { displayOrder: "asc" } })));
 subscriptionsRouter.get("/methods", authorize("RIDER"), async (_req, res) => res.json(await prisma.paymentMethodConfig.findMany({ where: { isActive: true }, select: { code: true, name: true, instructions: true, configuration: true } })));
 subscriptionsRouter.post("/orders", authorize("RIDER"), async (req, res) => { const data = z.object({ planId: z.string(), methodCode: z.enum(["MOTO_EXPRESS", "BANK_TRANSFER"]) }).parse(req.body); res.status(201).json(await createSubscriptionOrder(req.user!.id, data.planId, data.methodCode)); });
-subscriptionsRouter.get("/orders", authorize("RIDER"), async (req, res) => res.json(await prisma.subscriptionOrder.findMany({ where: { rider: { userId: req.user!.id } }, include: { payments: { include: { method: true } } }, orderBy: { createdAt: "desc" } })));
+subscriptionsRouter.get("/orders", authorize("RIDER"), async (req, res) => res.json(await prisma.subscriptionOrder.findMany({ where: { rider: { userId: req.user!.id } }, include: { plan: true, payments: { include: { method: true } } }, orderBy: { createdAt: "desc" } })));
 subscriptionsRouter.post("/payments/:id/mark-paid", authorize("RIDER"), async (req, res) => {
   const data = z.object({ bankName: z.string().min(2).max(100), proofReference: z.string().regex(/^data:image\/(jpeg|png|webp);base64,/).max(500000) }).parse(req.body);
   res.json(await markMotoExpressPaid(req.user!.id, req.params.id, data));

@@ -10,7 +10,7 @@ type Dashboard = { clients: number; ridersAwaitingReview: number; operationalRid
 
 const cards: { key: keyof Dashboard; label: string; caption: string; href: string; tone: string }[] = [
   { key: "ridersAwaitingReview", label: "Por revisar", caption: "Expedientes de riders", href: "/admin/approvals", tone: "from-amber-500/20 to-orange-500/5" },
-  { key: "pendingPayments", label: "Pagos pendientes", caption: "Comprobantes recibidos", href: "/admin/payments", tone: "from-violet-500/20 to-indigo-500/5" },
+  { key: "pendingPayments", label: "Pagos pendientes", caption: "Comprobantes recibidos", href: "/admin/payment-reviews", tone: "from-violet-500/20 to-indigo-500/5" },
   { key: "operationalRiders", label: "Riders operativos", caption: "Disponibles y habilitados", href: "/admin/riders", tone: "from-emerald-500/20 to-teal-500/5" },
   { key: "activeTrips", label: "Viajes en curso", caption: "Seguimiento operativo", href: "/admin/trips", tone: "from-sky-500/20 to-blue-500/5" },
 ];

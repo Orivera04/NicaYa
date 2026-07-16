@@ -1,22 +1,5 @@
 "use client";
-
-import { useEffect, useState } from "react";
-import { Guard } from "@/components/Guard";
-import { MobileAppShell } from "@/components/MobileAppShell";
-import { api } from "@/lib/api";
-
-type Trip = { id: string; status: string; originAddress: string; originLat: number; originLng: number; destinationAddress: string; destinationLat: number; destinationLng: number; currency: string; estimatedPrice: string; finalPrice?: string | null };
-
-export default function ClientHistoryPage() {
-  const [trips, setTrips] = useState<Trip[]>([]); const [message, setMessage] = useState("");
-  useEffect(() => { api<Trip[]>("/trips").then(setTrips).catch((error) => setMessage(error.message)); }, []);
-  const saveDestination = async (trip: Trip) => {
-    const label = window.prompt("Nombre para este destino, por ejemplo: Casa u Oficina");
-    if (!label?.trim()) return;
-    try {
-      await api(`/places/${encodeURIComponent(label.trim())}`, { method: "PUT", body: JSON.stringify({ address: trip.destinationAddress, lat: trip.destinationLat, lng: trip.destinationLng }) });
-      setMessage(`Destino guardado como ${label.trim()}.`);
-    } catch (error) { setMessage((error as Error).message); }
-  };
-  return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT"><h1 className="mt-4 text-2xl font-bold">Mis viajes</h1><p className="muted">Historial de solicitudes y viajes finalizados.</p>{trips.map((trip) => <article className="card mt-3" key={trip.id}><div className="flex justify-between"><b>{trip.status}</b><b>{trip.currency} {trip.finalPrice || trip.estimatedPrice}</b></div><p className="mt-2">{trip.originAddress} → {trip.destinationAddress}</p><button className="mt-3 w-full border text-sm" onClick={() => saveDestination(trip)}>Guardar destino</button></article>)}{!trips.length ? <p className="card mt-3">Aun no tienes viajes.</p> : null}{message ? <p className="mt-3 text-sm" role="status">{message}</p> : null}</MobileAppShell></Guard>;
-}
+import { useEffect, useState } from "react";import { Guard } from "@/components/Guard";import { MobileAppShell } from "@/components/MobileAppShell";import { api } from "@/lib/api";
+type Trip = { id:string;status:string;originAddress:string;destinationAddress:string;destinationLat:number;destinationLng:number;currency:string;estimatedPrice:string;finalPrice?:string|null };
+const label:Record<string,string>={COMPLETED:"Finalizado",REQUESTED:"Buscando rider",ACCEPTED:"Rider asignado",IN_PROGRESS:"En curso",CANCELLED_BY_CLIENT:"Cancelado"};
+export default function ClientHistoryPage(){const[trips,setTrips]=useState<Trip[]>([]);const[message,setMessage]=useState("");useEffect(()=>{api<Trip[]>("/trips").then(setTrips).catch(error=>setMessage(error.message))},[]);const save=async(trip:Trip)=>{const name=window.prompt("¿Cómo quieres llamar este destino?");if(!name?.trim())return;try{await api(`/places/${encodeURIComponent(name.trim())}`,{method:"PUT",body:JSON.stringify({address:trip.destinationAddress,lat:trip.destinationLat,lng:trip.destinationLng})});setMessage(`Destino guardado como ${name.trim()}.`)}catch(error){setMessage((error as Error).message)}};return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT"><section className="mt-4"><p className="text-xs font-bold tracking-wider text-orange-500">ACTIVIDAD</p><h1 className="text-2xl font-black">Mis viajes</h1><p className="muted">Tus solicitudes y traslados realizados.</p></section><section className="mt-4 space-y-3">{trips.map(trip=><article className="card" key={trip.id}><div className="flex justify-between gap-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{label[trip.status]||trip.status}</span><b>{trip.currency} {trip.finalPrice||trip.estimatedPrice}</b></div><p className="mt-3 text-sm font-semibold">{trip.originAddress}</p><p className="my-1 text-xs text-orange-500">↓</p><p className="text-sm font-semibold">{trip.destinationAddress}</p><button className="mt-4 w-full border text-sm" onClick={()=>save(trip)}>Guardar este destino</button></article>)}{!trips.length?<p className="card">Aún no tienes viajes. Cuando solicites una moto, aparecerá aquí.</p>:null}</section>{message?<p className="mt-3 text-sm" role="status">{message}</p>:null}</MobileAppShell></Guard>}
