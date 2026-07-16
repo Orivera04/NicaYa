@@ -16,7 +16,7 @@ const activeStatuses: Record<ActiveTrip["status"], { title: string; detail: stri
   ACCEPTED: { title: "Viaje aceptado", detail: "Dirígete al punto de origen.", next: { label: "Voy en camino", status: "RIDER_ON_THE_WAY" } },
   RIDER_ON_THE_WAY: { title: "En camino al pasajero", detail: "Confirma cuando llegues al origen.", next: { label: "He llegado", status: "RIDER_ARRIVED" } },
   RIDER_ARRIVED: { title: "Esperando al pasajero", detail: "Confirma el inicio solo cuando el pasajero esté contigo.", next: { label: "Iniciar viaje", status: "IN_PROGRESS" } },
-  IN_PROGRESS: { title: "Viaje en curso", detail: "Sigue la ruta al destino y finaliza al llegar.", next: { label: "Finalizar viaje", status: "COMPLETED" } },
+  IN_PROGRESS: { title: "Viaje en curso", detail: "Al llegar, pide al pasajero que confirme la finalización desde su aplicación." },
 };
 
 const money = (trip: Pick<RequestTrip, "currency" | "estimatedPrice" | "proposedPrice">) => `${trip.currency} ${trip.proposedPrice || trip.estimatedPrice}`;
@@ -104,7 +104,6 @@ export default function RiderPage() {
   const transition = async (status: string) => {
     if (!activeTrip) return;
     if (status === "IN_PROGRESS" && !window.confirm("¿El pasajero ya está contigo? Esta acción inicia el viaje.")) return;
-    if (status === "COMPLETED" && !window.confirm("¿Confirmas que el viaje terminó correctamente?")) return;
     setBusy(true); setMessage("");
     try { await api(`/trips/${activeTrip.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }); setMessage(status === "COMPLETED" ? "Viaje finalizado y registrado." : "Estado del viaje actualizado."); await load(); }
     catch (error) { setMessage((error as Error).message); }
