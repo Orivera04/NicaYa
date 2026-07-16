@@ -219,7 +219,8 @@ model SubscriptionPlan {
  description String
  price Decimal @db.Decimal(10,2)
  currency String @default("NIO")
- durationDays Int
+  durationDays Int
+  dailyTripLimit Int @default(5)
  benefits Json
  isActive Boolean @default(true)
  displayOrder Int @default(0)

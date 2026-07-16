@@ -9,7 +9,7 @@ type Role = "CLIENT" | "RIDER" | "ADMIN";
 type Item = { label: string; href: string; icon: string };
 const items: Record<Role, Item[]> = {
   CLIENT: [{ label: "Inicio", href: "/client/home", icon: "IN" }, { label: "Viaje", href: "/client", icon: "GO" }, { label: "Lugares", href: "/client/places", icon: "LU" }, { label: "Historial", href: "/client/history", icon: "HI" }, { label: "Cuenta", href: "/client/account", icon: "CU" }],
-  RIDER: [{ label: "Trabajo", href: "/rider", icon: "MO" }, { label: "Plan", href: "/rider/subscription", icon: "PL" }, { label: "Ganancias", href: "/rider/earnings", icon: "GA" }, { label: "Historial", href: "/rider/history", icon: "HI" }, { label: "Cuenta", href: "/rider/account", icon: "CU" }],
+  RIDER: [{ label: "Trabajo", href: "/rider", icon: "MO" }, { label: "Ganancias", href: "/rider/earnings", icon: "GA" }, { label: "Historial", href: "/rider/history", icon: "HI" }, { label: "Cuenta", href: "/rider/account", icon: "CU" }],
   ADMIN: [{ label: "Resumen", href: "/admin", icon: "IN" }, { label: "Aprobar", href: "/admin/approvals", icon: "OK" }, { label: "Riders", href: "/admin/riders", icon: "RI" }, { label: "Viajes", href: "/admin/trips", icon: "VI" }, { label: "Config", href: "/admin/configuration", icon: "CF" }],
 };
 const titles: Record<Role, string> = { CLIENT: "Pasajero", RIDER: "Rider", ADMIN: "Administracion" };

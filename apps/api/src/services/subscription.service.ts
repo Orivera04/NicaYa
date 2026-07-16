@@ -3,9 +3,9 @@ import { prisma } from "../db.js";
 import { fail } from "../lib/error.js";
 
 const catalog = [
-  { code: "BASIC", name: "Basico", description: "Acceso a solicitudes y soporte estandar.", price: 150, benefits: ["Solicitudes", "Soporte estandar"], displayOrder: 1 },
-  { code: "STANDARD", name: "Estandar", description: "Acceso completo para trabajar cada dia.", price: 200, benefits: ["Solicitudes", "Soporte prioritario"], displayOrder: 2 },
-  { code: "PREMIUM", name: "Premium", description: "Plan mensual para riders frecuentes.", price: 300, benefits: ["Solicitudes", "Soporte prioritario", "Perfil destacado"], displayOrder: 3 },
+  { code: "BASIC", name: "Basico", description: "Acceso a solicitudes y soporte estandar.", price: 150, dailyTripLimit: 5, benefits: ["Solicitudes", "Soporte estandar"], displayOrder: 1 },
+  { code: "STANDARD", name: "Estandar", description: "Acceso completo para trabajar cada dia.", price: 200, dailyTripLimit: 10, benefits: ["Solicitudes", "Soporte prioritario"], displayOrder: 2 },
+  { code: "PREMIUM", name: "Premium", description: "Plan mensual para riders frecuentes.", price: 300, dailyTripLimit: 20, benefits: ["Solicitudes", "Soporte prioritario", "Perfil destacado"], displayOrder: 3 },
 ];
 
 export async function ensureSubscriptionCatalog() {

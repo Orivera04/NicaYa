@@ -1,0 +1,9 @@
+ALTER TABLE "SubscriptionPlan" ADD COLUMN "dailyTripLimit" INTEGER NOT NULL DEFAULT 5;
+
+UPDATE "SubscriptionPlan"
+SET "dailyTripLimit" = CASE "code"
+  WHEN 'BASIC' THEN 5
+  WHEN 'STANDARD' THEN 10
+  WHEN 'PREMIUM' THEN 20
+  ELSE 5
+END;
