@@ -19,6 +19,8 @@ export async function createSubscriptionOrder(userId: string, planId: string, me
   const [plan, method] = await Promise.all([prisma.subscriptionPlan.findFirst({ where: { id: planId, isActive: true } }), prisma.paymentMethodConfig.findFirst({ where: { code: methodCode, isActive: true } })]);
   if (!plan) fail(404, "PLAN_NOT_AVAILABLE", "El plan no esta disponible.");
   if (!method) fail(404, "PAYMENT_METHOD_NOT_AVAILABLE", "El metodo de pago no esta disponible.");
+  const receiver = method.configuration as Record<string, string> | null;
+  if (!receiver?.holderName?.trim() || !receiver?.bank?.trim() || !receiver?.account?.trim()) fail(409, "PAYMENT_ACCOUNT_NOT_CONFIGURED", "Administracion debe configurar titular, banco y cuenta antes de recibir pagos.");
   const reference = `MS-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
   return prisma.$transaction(async (tx) => {
     const order = await tx.subscriptionOrder.create({ data: { riderId: rider.id, planId: plan.id, planNameSnapshot: plan.name, priceSnapshot: plan.price, currencySnapshot: plan.currency, durationDaysSnapshot: plan.durationDays, status: "PENDING_PAYMENT", expiresAt: new Date(Date.now() + 60 * 60_000) } });
