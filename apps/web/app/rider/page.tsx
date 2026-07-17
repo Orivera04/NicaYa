@@ -36,6 +36,7 @@ export default function RiderPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const centeredFromGps = useRef(false);
+  const lastLiveLocation = useRef<{ at: number; lat: number; lng: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -47,15 +48,30 @@ export default function RiderPage() {
       else setRequests([]);
     } catch (error) { setMessage((error as Error).message); }
   }, []);
+  const publishLocation = useCallback(async (next: MapPoint & { accuracy?: number; heading?: number }) => {
+    if (activeTrip) await api(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(next) });
+    else if (profile?.available) await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(next) });
+  }, [activeTrip?.id, profile?.available]);
   const refreshLocation = useCallback(() => {
     if (!navigator.geolocation) return setMessage("Activa GPS para recibir solicitudes cercanas.");
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       const next = { lat: coords.latitude, lng: coords.longitude }; setPosition(next); if (!centeredFromGps.current) { setFocus(next); centeredFromGps.current = true; }
-      if (profile?.available) try { await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(next) }); } catch { /* Retried on the next scheduled update. */ }
+      if (profile?.available || activeTrip) try { await publishLocation(next); } catch { /* Retried on the next scheduled update. */ }
     }, () => setMessage("No pudimos actualizar tu GPS. Revisa los permisos."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
-  }, [profile?.available]);
+  }, [activeTrip, profile?.available, publishLocation]);
   useEffect(() => { void load(); refreshLocation(); }, [load, refreshLocation]);
+  useEffect(() => { lastLiveLocation.current = null; }, [activeTrip?.id]);
   useEffect(() => { const timer = window.setInterval(() => { void load(); if (profile?.available) refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, profile?.available, refreshLocation]);
+  useEffect(() => {
+    if (!activeTrip || !navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(({ coords }) => {
+      const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : undefined };
+      setPosition(next);
+      const previous = lastLiveLocation.current; const moved = !previous || Math.hypot(next.lat - previous.lat, next.lng - previous.lng) > .00008;
+      if (moved || !previous || Date.now() - previous.at >= 5000) { lastLiveLocation.current = { at: Date.now(), lat: next.lat, lng: next.lng }; void publishLocation(next).catch(() => setMessage("No pudimos compartir tu ubicación. Reintentaremos automáticamente.")); }
+    }, () => setMessage("No pudimos actualizar tu GPS durante el viaje."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [activeTrip?.id, publishLocation]);
   useEffect(() => {
     const session = getSession(); if (!session) return;
     const socketUrl = (process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api").replace(/\/api$/, "");

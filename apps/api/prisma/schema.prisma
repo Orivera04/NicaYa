@@ -304,6 +304,11 @@ model Trip {
  client User @relation("ClientTrips",fields:[clientId],references:[id])
  riderId String?
  rider User? @relation("RiderTrips",fields:[riderId],references:[id])
+ riderLat Float?
+ riderLng Float?
+ riderAccuracy Float?
+ riderHeading Float?
+ riderLocationUpdatedAt DateTime?
  status TripStatus @default(REQUESTED)
  originLat Float
  originLng Float
@@ -324,6 +329,18 @@ model Trip {
  histories TripStatusHistory[]
  rating Rating?
  offers TripOffer[]
+ locations TripLocation[]
+}
+model TripLocation {
+ id String @id @default(cuid())
+ tripId String
+ trip Trip @relation(fields:[tripId],references:[id],onDelete:Cascade)
+ lat Float
+ lng Float
+ accuracy Float?
+ heading Float?
+ createdAt DateTime @default(now())
+ @@index([tripId,createdAt])
 }
 model TripOffer {
  id String @id @default(cuid())

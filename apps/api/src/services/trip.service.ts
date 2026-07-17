@@ -1,4 +1,6 @@
 import { Prisma, TripStatus } from "@prisma/client";
+
+export async function recordTripLocation(tripId:string,riderId:string,location:{lat:number;lng:number;accuracy?:number;heading?:number}){ return prisma.$transaction(async tx=>{ const trip=await tx.trip.findUnique({where:{id:tripId},select:{id:true,clientId:true,riderId:true,status:true}}); if(!trip) fail(404,"TRIP_NOT_FOUND","Viaje no encontrado."); if(trip.riderId!==riderId) fail(403,"FORBIDDEN","No puedes actualizar la ubicacion de este viaje."); if(!["ACCEPTED","RIDER_ON_THE_WAY","RIDER_ARRIVED","IN_PROGRESS"].includes(trip.status)) fail(409,"TRIP_NOT_ACTIVE","El viaje ya no acepta ubicaciones."); const recordedAt=new Date(); await tx.trip.update({where:{id:trip.id},data:{riderLat:location.lat,riderLng:location.lng,riderAccuracy:location.accuracy??null,riderHeading:location.heading??null,riderLocationUpdatedAt:recordedAt}}); await tx.tripLocation.create({data:{tripId:trip.id,...location}}); return {tripId:trip.id,clientId:trip.clientId,lat:location.lat,lng:location.lng,accuracy:location.accuracy??null,heading:location.heading??null,recordedAt}; }); }
 import { prisma } from "../db.js";
 import { fail } from "../lib/error.js";
 import { haversineKm } from "../lib/geo.js";
