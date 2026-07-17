@@ -40,4 +40,4 @@ authRouter.post("/refresh", async (req, res) => {
   res.json(response);
 });
 authRouter.post("/logout", async (req, res) => { const token = String(req.body.refreshToken || ""); if (token) await prisma.refreshToken.updateMany({ where: { tokenHash: hashToken(token), revokedAt: null }, data: { revokedAt: new Date() } }); res.status(204).end(); });
-authRouter.get("/me", authenticate, async (req, res) => res.json(await prisma.user.findUnique({ where: { id: req.user!.id }, include: { riderProfile: { include: { subscriptions: { orderBy: { createdAt: "desc" }, take: 1 } } }, clientProfile: true } })));
+authRouter.get("/me", authenticate, async (req, res) => res.json(await prisma.user.findUnique({ where: { id: req.user!.id }, select: { id: true, name: true, email: true, role: true, status: true, phone: true, createdAt: true, riderProfile: { include: { subscriptions: { orderBy: { createdAt: "desc" }, take: 1 } } }, clientProfile: true } })));
