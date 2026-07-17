@@ -7,6 +7,7 @@ import { safeRouter } from "../middleware/safe-router.js";
 import { getSettings } from "../services/settings.service.js";
 import { assertRiderCanOperate } from "../services/subscription.service.js";
 import { haversineKm } from "../lib/geo.js";
+import { nicaraguaDayWindow } from "../lib/business-day.js";
 
 export const ridersRouter = safeRouter();
 ridersRouter.use(authenticate, authorize("RIDER"));
@@ -50,8 +51,13 @@ async function readiness(userId: string) {
   const activeTrip = await prisma.trip.findFirst({ where: { riderId: userId, status: { in: ["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"] } }, select: { id: true, status: true } });
   if (activeTrip) blockers.push({ code: "ACTIVE_TRIP", message: "Tienes un viaje activo. Finalízalo antes de aceptar otro.", action: "Ver viaje" });
   const subscription = rider.subscriptions[0];
+  const dailyTripLimit = subscription?.plan?.dailyTripLimit ?? null;
+  const { start, end } = nicaraguaDayWindow(now);
+  const completedToday = dailyTripLimit === null ? 0 : await prisma.trip.count({ where: { riderId: userId, status: "COMPLETED", updatedAt: { gte: start, lt: end } } });
+  const remainingTrips = dailyTripLimit === null ? null : Math.max(0, dailyTripLimit - completedToday);
+  if (remainingTrips === 0) blockers.push({ code: "DAILY_TRIP_LIMIT_REACHED", message: "Alcanzaste los viajes permitidos por tu plan para hoy.", action: "Vuelve mañana" });
   const subscriptionDaysRemaining = subscription ? Math.max(0, Math.ceil((subscription.expiresAt!.getTime() - now.getTime()) / 864e5)) : null;
-  return { ready: blockers.length === 0, blockers, workZone: rider.workZoneConfigured ? { department: rider.workZoneDepartment, lat: rider.workZoneLat, lng: rider.workZoneLng, updatedAt: rider.workZoneUpdatedAt } : null, activeTrip, subscription: subscription ? { plan: subscription.plan?.name, expiresAt: subscription.expiresAt, daysRemaining: subscriptionDaysRemaining } : null };
+  return { ready: blockers.length === 0, blockers, workZone: rider.workZoneConfigured ? { department: rider.workZoneDepartment, lat: rider.workZoneLat, lng: rider.workZoneLng, updatedAt: rider.workZoneUpdatedAt } : null, activeTrip, subscription: subscription ? { plan: subscription.plan?.name, expiresAt: subscription.expiresAt, daysRemaining: subscriptionDaysRemaining } : null, dailyQuota: dailyTripLimit === null ? null : { limit: dailyTripLimit, completed: completedToday, remaining: remainingTrips, resetsAt: end } };
 }
 
 ridersRouter.get("/me", async (req, res) => res.json(await prisma.riderProfile.findUnique({ where: { userId: req.user!.id }, include: { documents: true, subscriptions: { orderBy: { createdAt: "desc" } } } })));

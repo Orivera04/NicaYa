@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "../db.js";
 import { fail } from "../lib/error.js";
+import { nicaraguaDayWindow } from "../lib/business-day.js";
 
 const catalog = [
   { code: "BASIC", name: "Basico", description: "Acceso a solicitudes y soporte estandar.", price: 150, dailyTripLimit: 5, benefits: ["Solicitudes", "Soporte estandar"], displayOrder: 1 },
@@ -98,9 +99,16 @@ export async function expireSubscriptionData() {
 export async function assertRiderCanOperate(userId: string) {
   const now = new Date();
   const rider = await prisma.riderProfile.findUnique({ where: { userId }, include: { user: true, subscriptions: { where: { status: "ACTIVE", startsAt: { lte: now }, expiresAt: { gt: now } }, include: { plan: true }, take: 1 } } });
-  if (!rider || rider.approval !== "APPROVED" || rider.onboardingStatus !== "READY_TO_WORK") fail(403, "RIDER_NOT_READY", "Completa la activacion de tu cuenta antes de trabajar.");
+  if (!rider) return fail(403, "RIDER_NOT_READY", "Completa la activacion de tu cuenta antes de trabajar.");
+  if (rider.approval !== "APPROVED" || rider.onboardingStatus !== "READY_TO_WORK") fail(403, "RIDER_NOT_READY", "Completa la activacion de tu cuenta antes de trabajar.");
   if (rider.user.status !== "ACTIVE") fail(403, "ACCOUNT_INACTIVE", "Tu cuenta no esta activa.");
   const settings = await prisma.systemSetting.findUnique({ where: { key: "subscriptionRequiredForRiders" } });
   if (settings?.value !== "false" && rider.subscriptions.length === 0) fail(403, "SUBSCRIPTION_REQUIRED", "Necesitas una suscripcion activa para operar.");
+  const dailyTripLimit = rider.subscriptions[0]?.plan?.dailyTripLimit;
+  if (dailyTripLimit) {
+    const { start, end } = nicaraguaDayWindow(now);
+    const completedToday = await prisma.trip.count({ where: { riderId: userId, status: "COMPLETED", updatedAt: { gte: start, lt: end } } });
+    if (completedToday >= dailyTripLimit) fail(409, "DAILY_PLAN_LIMIT_REACHED", "Ya completaste los viajes permitidos por tu plan para hoy.");
+  }
   return rider;
 }
