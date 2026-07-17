@@ -5,7 +5,7 @@ import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from "mapl
 
 export type MapPoint = { lat: number; lng: number; label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; focus?: MapPoint; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onRequestClick?: (id: string) => void; className?: string };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; routeFrom?: MapPoint; routeTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onRequestClick?: (id: string) => void; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
 const mapStyle: StyleSpecification = {
@@ -20,7 +20,7 @@ const markerSvg = (kind: "rider" | "passenger" | "destination" | "request") => {
   return `<span class="motoya-map-icon" style="background:${color}"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg></span>`;
 };
 
-export function MapView({ origin, destination, rider, focus, requests = [], onPick, onOriginMove, onDestinationMove, onRequestClick, className }: Props) {
+export function MapView({ origin, destination, rider, routeFrom, routeTo, focus, recenterVersion = 0, requests = [], onPick, onOriginMove, onDestinationMove, onRequestClick, className }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -28,26 +28,28 @@ export function MapView({ origin, destination, rider, focus, requests = [], onPi
   const fittedRoute = useRef("");
   const lastFocus = useRef("");
   const [route, setRoute] = useState<MapPoint[]>([]);
-  const props = useRef({ origin, destination, rider, requests, onPick, onOriginMove, onDestinationMove, onRequestClick });
-  props.current = { origin, destination, rider, requests, onPick, onOriginMove, onDestinationMove, onRequestClick };
+  const props = useRef({ origin, destination, rider, routeFrom, routeTo, requests, onPick, onOriginMove, onDestinationMove, onRequestClick });
+  props.current = { origin, destination, rider, routeFrom, routeTo, requests, onPick, onOriginMove, onDestinationMove, onRequestClick };
 
   useEffect(() => {
-    const key = routeKey(origin, destination);
-    if (!key || !origin || !destination) { setRoute([]); return; }
+    const from = routeFrom || origin; const to = routeTo || destination;
+    const key = routeKey(from, to);
+    if (!key || !from || !to) { setRoute([]); return; }
     let live = true; const controller = new AbortController();
-    fetch(`https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
+    fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Route unavailable")))
       .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) setRoute(points); })
       .catch(() => { if (live) setRoute([]); });
     return () => { live = false; controller.abort(); };
-  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng]);
+  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, routeFrom?.lat, routeFrom?.lng, routeTo?.lat, routeTo?.lng]);
 
   const render = () => {
     const instance = map.current; const lib = runtime.current;
     if (!instance || !lib || !instance.isStyleLoaded()) return;
     markers.current.forEach((marker) => marker.remove()); markers.current = [];
     const current = props.current;
-    const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: (route.length > 1 ? route : current.origin && current.destination ? [current.origin, current.destination] : []).map((point) => [point.lng, point.lat]) } };
+    const from = current.routeFrom || current.origin; const to = current.routeTo || current.destination;
+    const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: (route.length > 1 ? route : from && to ? [from, to] : []).map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
     if (source) source.setData(routeData);
     else { instance.addSource("motoya-route", { type: "geojson", data: routeData }); instance.addLayer({ id: "motoya-route-line", type: "line", source: "motoya-route", paint: { "line-color": "#f97316", "line-width": 5, "line-opacity": .92 } }); }
@@ -63,7 +65,7 @@ export function MapView({ origin, destination, rider, focus, requests = [], onPi
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), "Destino", current.onDestinationMove);
     addMarker(current.rider, "rider", false, "Rider · motocicleta");
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
-    const key = routeKey(current.origin, current.destination);
+    const key = to ? `${to.lat.toFixed(5)},${to.lng.toFixed(5)}` : "";
     if (route.length > 1 && key && fittedRoute.current !== key) { const bounds = route.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([route[0].lng, route[0].lat], [route[0].lng, route[0].lat])); instance.fitBounds(bounds, { padding: 54, maxZoom: 15, duration: 700 }); fittedRoute.current = key; }
   };
 
@@ -82,8 +84,8 @@ export function MapView({ origin, destination, rider, focus, requests = [], onPi
   }, []);
   useEffect(() => {
     render();
-    const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}` : "";
-    if (map.current && focus && route.length < 2 && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
-  }, [origin, destination, rider, focus, requests, route, onOriginMove, onDestinationMove, onRequestClick]);
+    const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
+    if (map.current && focus && (route.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
+  }, [origin, destination, rider, routeFrom, routeTo, focus, recenterVersion, requests, route, onOriginMove, onDestinationMove, onRequestClick]);
   return <div ref={host} className={`relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`} aria-label="Mapa interactivo" />;
 }
