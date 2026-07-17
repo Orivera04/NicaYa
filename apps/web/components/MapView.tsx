@@ -5,10 +5,10 @@ import type { LatLngLiteral, Map as LeafletMap } from "leaflet";
 
 export type MapPoint = LatLngLiteral & { label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; focus?: MapPoint; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onRequestClick?: (id: string) => void };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; focus?: MapPoint; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onRequestClick?: (id: string) => void; className?: string };
 const icon = (color: string) => `<span style="display:block;width:22px;height:22px;border-radius:9999px;background:${color};border:3px solid white;box-shadow:0 1px 5px #334155"></span>`;
 
-export function MapView({ origin, destination, rider, focus, requests = [], onPick, onOriginMove, onDestinationMove, onRequestClick }: Props) {
+export function MapView({ origin, destination, rider, focus, requests = [], onPick, onOriginMove, onDestinationMove, onRequestClick, className }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<LeafletMap | null>(null);
   const props = useRef({ origin, destination, rider, requests, onPick, onOriginMove, onDestinationMove, onRequestClick });
@@ -45,5 +45,5 @@ export function MapView({ origin, destination, rider, focus, requests = [], onPi
     return () => { active = false; cleanup(); map.current = null; };
   }, []);
   useEffect(() => { draw(); if (map.current && focus) map.current.flyTo(focus, 15, { animate: true }); }, [origin, destination, rider, focus, requests, onOriginMove, onDestinationMove, onRequestClick]);
-  return <div ref={host} className="relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200" aria-label="Mapa interactivo" />;
+  return <div ref={host} className={`relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`} aria-label="Mapa interactivo" />;
 }

@@ -1,79 +1,150 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Guard } from "@/components/Guard";
-import { MapPoint, MapView } from "@/components/MapView";
-import { api } from "@/lib/api";
-import { AdvertisementCarousel } from "@/components/AdvertisementCarousel";
-import { MobileAppShell } from "@/components/MobileAppShell";
 import { LocationSearch } from "@/components/LocationSearch";
+import { MapPoint, MapView } from "@/components/MapView";
+import { MobileAppShell } from "@/components/MobileAppShell";
+import { api } from "@/lib/api";
 
 type Place = MapPoint & { address: string; reference?: string | null };
 type SavedPlace = Place & { id: string; label: string };
 type Quote = { distanceKm: number; estimatedDurationMin: number; minimumFare: number; maximumFare: number; estimatedPrice: number; currency: string };
 type Offer = { id: string; amount: string; currency: string; rider: { name: string } };
-type HistoryTrip = { id: string; status: string; originAddress: string; destinationAddress: string; currency: string; estimatedPrice: string; finalPrice?: string | null };
-type TripProgress = { id: string; status: string; originAddress: string; destinationAddress: string; currency: string; estimatedPrice: string; finalPrice?: string | null; rider?: { name: string; riderProfile?: { vehicleModel?: string | null; vehiclePlate?: string | null } | null } | null };
-const managua: Place = { lat: 12.1364, lng: -86.2514, address: "Managua, Nicaragua" };
-const recentStorageKey = "motoya-recent-places";
+type ActiveTrip = { id: string; status: string; originAddress: string; destinationAddress: string; originLat: number; originLng: number; destinationLat: number; destinationLng: number; currency: string; estimatedPrice: string; finalPrice?: string | null; rider?: { name: string; riderProfile?: { vehicleModel?: string | null; vehiclePlate?: string | null } | null } | null };
+
+type Stage = "ROUTE" | "QUOTE" | "REVIEW" | "SEARCHING" | "TRACKING";
+const initialPlace: Place = { lat: 12.1364, lng: -86.2514, address: "Tu ubicación actual" };
+const cancellationReasons = ["Dirección errónea", "Problemas de seguridad", "El rider pidió cancelar", "Rider muy lejos", "Solo estoy probando la aplicación", "Otro"];
+
+const statusCopy: Record<string, string> = {
+  ACCEPTED: "Rider asignado. Está preparando el recorrido hacia tu origen.",
+  RIDER_ON_THE_WAY: "Tu rider va en camino al punto de recogida.",
+  RIDER_ARRIVED: "Tu rider llegó. Verifica la moto antes de iniciar.",
+  IN_PROGRESS: "Viaje en curso. Confirma la llegada solo al llegar al destino.",
+};
 
 export default function ClientPage() {
-  const [origin, setOrigin] = useState<Place>({ ...managua, address: "Selecciona tu origen" });
+  const [origin, setOrigin] = useState<Place>(initialPlace);
   const [destination, setDestination] = useState<Place | null>(null);
-  const [selection, setSelection] = useState<"origin" | "destination">("origin");
+  const [editing, setEditing] = useState<"origin" | "destination">("destination");
+  const [focus, setFocus] = useState<MapPoint>(initialPlace);
+  const [stage, setStage] = useState<Stage>("ROUTE");
   const [quote, setQuote] = useState<Quote | null>(null);
-  const [favorites, setFavorites] = useState<SavedPlace[]>([]);
-  const [recents, setRecents] = useState<Place[]>([]);
-  const [message, setMessage] = useState("");
-  const [notice, setNotice] = useState("");
-  const [panelExpanded, setPanelExpanded] = useState(true);
-  const [label, setLabel] = useState(""); const [reference, setReference] = useState("");
   const [proposedPrice, setProposedPrice] = useState("");
-  const [requestState, setRequestState] = useState<"idle" | "confirm" | "sending" | "searching" | "accepted" | "cancelled">("idle");
-  const [tripId, setTripId] = useState<string | null>(null); const [offers, setOffers] = useState<Offer[]>([]);
-  const [history, setHistory] = useState<HistoryTrip[]>([]);
-  const [activeTrip, setActiveTrip] = useState<TripProgress | null>(null);
+  const [favorites, setFavorites] = useState<SavedPlace[]>([]);
+  const [tripId, setTripId] = useState<string | null>(null);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [activeTrip, setActiveTrip] = useState<ActiveTrip | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
-  const [cancelReason, setCancelReason] = useState("Dirección errónea");
-  const [mapFocus, setMapFocus] = useState<MapPoint>(managua);
-  const loadFavorites = () => api<SavedPlace[]>("/places").then(setFavorites).catch(() => undefined);
+  const [cancelReason, setCancelReason] = useState(cancellationReasons[0]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
 
-  useEffect(() => { loadFavorites(); api<HistoryTrip[]>("/trips").then((trips) => { setHistory(trips); const current = trips.find((trip) => ["REQUESTED", "ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)); if (current) { setTripId(current.id); setRequestState(current.status === "REQUESTED" ? "searching" : "accepted"); } }).catch(() => undefined); try { const data = localStorage.getItem(recentStorageKey); if (data) setRecents(JSON.parse(data)); } catch {} locate(); }, []);
-  useEffect(() => { if (!tripId || requestState !== "searching") return; const refresh = () => api<Offer[]>(`/trips/${tripId}/offers`).then(setOffers).catch(() => undefined); refresh(); const timer = window.setInterval(refresh, 5000); return () => clearInterval(timer); }, [tripId, requestState]);
-  useEffect(() => { if (!tripId) return; const refresh = () => api<TripProgress>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setRequestState("accepted"); if (trip.status === "COMPLETED") { setRequestState("idle"); setTripId(null); setHistory((items) => [trip, ...items.filter((item) => item.id !== trip.id)]); } if (trip.status.startsWith("CANCELLED")) setRequestState("cancelled"); }).catch(() => undefined); refresh(); const timer = window.setInterval(refresh, 5000); return () => clearInterval(timer); }, [tripId]);
-  const remember = (place: Place) => setRecents((current) => { const next = [place, ...current.filter((item) => item.address !== place.address)].slice(0, 3); localStorage.setItem(recentStorageKey, JSON.stringify(next)); return next; });
-  const selectPlace = (place: Place, target = selection) => { setQuote(null); setProposedPrice(""); setMapFocus(place); if (target === "origin") { setOrigin(place); setSelection("destination"); setMessage("Origen actualizado. Selecciona el destino."); } else { setDestination(place); remember(place); setMessage("Destino seleccionado. Calcula la tarifa."); } };
-  const reverse = async (point: MapPoint): Promise<Place> => { try { return await api<Place>(`/geocoding/reverse?lat=${point.lat}&lng=${point.lng}`); } catch { return { ...point, address: `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}` }; } };
-  const pick = async (point: MapPoint) => selectPlace(await reverse(point));
-  const locate = () => { if (!navigator.geolocation) { setNotice("Tu navegador no permite GPS. Busca o toca el mapa para definir el origen."); return; } navigator.geolocation.getCurrentPosition(async (position) => { const place = await reverse({ lat: position.coords.latitude, lng: position.coords.longitude }); setOrigin(place); setSelection("destination"); setQuote(null); setNotice(position.coords.accuracy > 100 ? `Señal GPS aproximada (${Math.round(position.coords.accuracy)} m). Revisa o arrastra el pin verde.` : `Ubicación detectada (${Math.round(position.coords.accuracy)} m de precisión).`); }, (error) => setNotice(error.code === error.PERMISSION_DENIED ? "No diste permiso de ubicación. Usa búsqueda o mapa." : error.code === error.POSITION_UNAVAILABLE ? "No hay señal GPS disponible. Usa búsqueda o mapa." : "No se pudo obtener ubicación a tiempo. Inténtalo nuevamente."), { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }); };
-  const estimate = async () => { if (!destination) return; try { setQuote(await api<Quote>("/trips/estimate", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO" }) })); setMessage(""); } catch (error) { setMessage((error as Error).message); } };
-  const publishRequest = async () => { if (!destination || !quote) return; const proposed = proposedPrice ? Number(proposedPrice) : undefined; if (proposed !== undefined && (!Number.isFinite(proposed) || proposed < quote.minimumFare || proposed > quote.maximumFare)) { setMessage(`La propuesta debe estar entre ${quote.minimumFare} y ${quote.maximumFare} ${quote.currency}.`); return; } setRequestState("sending"); try { const trip = await api<{ id: string }>("/trips", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO", proposedPrice: proposed }) }); setTripId(trip.id); setRequestState("searching"); setMessage("Buscando riders disponibles cerca de tu origen."); } catch (error) { setRequestState("idle"); setMessage((error as Error).message); } };
-  const acceptOffer = async (offerId: string) => { if (!tripId) return; try { await api(`/trips/${tripId}/offers/${offerId}/accept`, { method: "POST" }); setRequestState("accepted"); setMessage("Oferta aceptada. El rider irá hacia tu origen."); } catch (error) { setMessage((error as Error).message); } };
-  const rejectOffer = async (offerId: string) => { if (!tripId) return; try { await api(`/trips/${tripId}/offers/${offerId}/reject`, { method: "POST" }); setOffers((items) => items.filter((item) => item.id !== offerId)); setMessage("Oferta rechazada. Puedes esperar otra propuesta."); } catch (error) { setMessage((error as Error).message); } };
-  const cancel = async () => { if (!tripId) return; try { await api(`/trips/${tripId}/cancel`, { method: "POST", body: JSON.stringify({ reason: cancelReason }) }); setShowCancel(false); setRequestState("cancelled"); setMessage("Solicitud cancelada."); } catch (error) { setMessage((error as Error).message); } };
-  const complete = async () => { if (!tripId || activeTrip?.status !== "IN_PROGRESS") return; if (!window.confirm("¿Ya llegaste al destino? Esta acción finaliza el viaje.")) return; try { await api(`/trips/${tripId}/complete`, { method: "POST" }); setMessage("Viaje completado. Ya puedes calificar a tu rider desde el historial."); setRequestState("idle"); setTripId(null); setActiveTrip(null); api<HistoryTrip[]>("/trips").then(setHistory).catch(() => undefined); } catch (error) { setMessage((error as Error).message); } };
-  const save = async () => { const place = selection === "destination" && destination ? destination : origin; if (!label.trim()) { setMessage("Escribe un nombre para guardar la ubicación."); return; } try { await api(`/places/${encodeURIComponent(label.trim())}`, { method: "PUT", body: JSON.stringify({ ...place, reference: reference.trim() || null }) }); setLabel(""); setReference(""); loadFavorites(); } catch (error) { setMessage((error as Error).message); } };
+  const selectPlace = (place: Place, target = editing) => {
+    setFocus(place); setQuote(null); setProposedPrice(""); setShowSearch(false);
+    if (target === "origin") { setOrigin(place); setEditing("destination"); setMessage("Origen actualizado. Ahora elige el destino."); }
+    else { setDestination(place); setMessage("Destino seleccionado. Ya puedes consultar la tarifa."); }
+  };
+  const reverse = async (point: MapPoint): Promise<Place> => {
+    try { return await api<Place>(`/geocoding/reverse?lat=${point.lat}&lng=${point.lng}`); }
+    catch { return { ...point, address: `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}` }; }
+  };
+  const locate = () => {
+    if (!navigator.geolocation) return setMessage("Tu navegador no permite usar GPS. Busca una dirección o toca el mapa.");
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      const place = await reverse({ lat: coords.latitude, lng: coords.longitude });
+      setOrigin(place); setFocus(place); setQuote(null); setMessage(`Ubicación actualizada. Precisión aproximada: ${Math.round(coords.accuracy)} m.`);
+    }, (error) => setMessage(error.code === error.PERMISSION_DENIED ? "No autorizaste ubicación. Puedes buscar o ajustar el punto en el mapa." : "No pudimos obtener tu ubicación. Inténtalo otra vez."), { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  };
+  const load = async () => {
+    try {
+      const [places, trips] = await Promise.all([api<SavedPlace[]>("/places"), api<ActiveTrip[]>("/trips")]);
+      setFavorites(places);
+      const current = trips.find((trip) => ["REQUESTED", "ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status));
+      if (current) { setTripId(current.id); setActiveTrip(current); setStage(current.status === "REQUESTED" ? "SEARCHING" : "TRACKING"); }
+    } catch (error) { setMessage((error as Error).message); }
+  };
+  useEffect(() => { void load(); locate(); }, []);
+  useEffect(() => {
+    if (!tripId) return;
+    const refresh = async () => {
+      try {
+        const trip = await api<ActiveTrip>(`/trips/${tripId}`);
+        setActiveTrip(trip);
+        if (trip.status === "REQUESTED") {
+          setStage("SEARCHING");
+          setOffers(await api<Offer[]>(`/trips/${tripId}/offers`));
+        } else if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING");
+        else if (trip.status.startsWith("CANCELLED") || trip.status === "COMPLETED") reset();
+      } catch { /* A short networking error should not erase an active trip from the screen. */ }
+    };
+    void refresh(); const timer = window.setInterval(() => void refresh(), 5000); return () => clearInterval(timer);
+  }, [tripId]);
 
-  return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT">
-    <section id="inicio" className="scroll-mt-4"><AdvertisementCarousel /></section>
-    <section className="trip-steps mt-3" aria-label="Progreso para solicitar viaje"><span className="is-active">1<small>Ruta</small></span><i /><span className={destination ? "is-active" : ""}>2<small>Tarifa</small></span><i /><span className={quote ? "is-active" : ""}>3<small>Confirmar</small></span></section>
-    <section id="viaje" className="card mt-3 scroll-mt-4"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-orange-600">Tu viaje</p><b>¿A dónde te llevamos?</b></div><div className="flex gap-2"><button aria-label="Contraer o expandir" className="border py-2 text-sm" onClick={() => setPanelExpanded(!panelExpanded)}>{panelExpanded ? "−" : "+"}</button>{destination && <button aria-label="Intercambiar origen y destino" className="border py-2 text-sm" onClick={() => { setOrigin(destination); setDestination(origin); setMapFocus(destination); setQuote(null); }}>⇅</button>}</div></div>{panelExpanded && <><button className={`trip-place mt-3 w-full text-left ${selection === "origin" ? "is-selected" : ""}`} onClick={() => setSelection("origin")}><span>Origen</span>{origin.address}</button><button className={`trip-place mt-2 w-full text-left ${selection === "destination" ? "is-selected" : ""}`} onClick={() => setSelection("destination")}><span>Destino</span>{destination?.address || "Busca o elige un punto en el mapa"}</button></>}</section>
-    <div id="buscar" className="scroll-mt-4"><LocationSearch onSelect={(place) => selectPlace(place)} /></div>
-    {notice && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{notice}</p>}
-    <p className="mt-3 text-sm font-medium">{selection === "origin" ? "Toca el mapa o arrastra el pin verde para corregir origen." : "Toca el mapa o arrastra el pin naranja para elegir destino."}</p>
-    <section className="relative mt-3"><MapView origin={origin} destination={destination || undefined} focus={mapFocus} onPick={pick} onOriginMove={async (point) => selectPlace(await reverse(point), "origin")} onDestinationMove={async (point) => selectPlace(await reverse(point), "destination")} />{destination && <div className="absolute bottom-3 left-3 right-3 rounded-xl bg-slate-950/95 p-3 text-white shadow-lg"><b>Moto · 1 pasajero</b><p className="mt-1 text-sm text-slate-300">Ruta preparada para solicitar.</p></div>}<button className="absolute right-3 top-3 grid h-11 w-11 place-items-center rounded-full bg-white text-xl font-bold shadow-lg" aria-label="Centrar mi ubicación" onClick={locate}>◎</button></section><button className="mt-3 w-full border" onClick={locate}>Usar mi ubicación actual</button>
-    <section className="mt-3 space-y-3"><nav className="flex gap-2 overflow-x-auto text-sm"><a className="border" href="#viaje">Viaje</a><a className="border" href="#servicio">Servicio</a><a className="border" href="#lugares">Lugares</a><a className="border" href="#historial">Historial</a></nav><section id="servicio" className="card"><b>Servicio disponible: Moto</b><p className="muted mt-1">Traslado individual en motocicleta. Capacidad: 1 pasajero. Usa casco y sigue las reglas de seguridad.</p></section>
-      <section id="lugares" className="card"><b>Guardar ubicación</b><div className="mt-2 flex gap-2"><button className="border flex-1" onClick={() => setLabel("Casa")}>Casa</button><button className="border flex-1" onClick={() => setLabel("Trabajo")}>Trabajo</button></div><input className="mt-2" value={label} maxLength={40} onChange={(event) => setLabel(event.target.value)} placeholder="Nombre del lugar" /><input className="mt-2" value={reference} maxLength={120} onChange={(event) => setReference(event.target.value)} placeholder="Referencia opcional" /><button className="primary mt-2 w-full" onClick={save}>Guardar ubicación</button></section>
-      {favorites.length > 0 && <section className="card"><b>Favoritos</b>{favorites.map((place) => <div className="mt-2 rounded-xl border p-2" key={place.id}><b>{place.label}</b><p className="muted">{place.address}</p><div className="mt-2 flex gap-2"><button className="border flex-1 py-2 text-sm" onClick={() => selectPlace(place, "origin")}>Origen</button><button className="border flex-1 py-2 text-sm" onClick={() => selectPlace(place, "destination")}>Destino</button><button className="py-2 text-sm text-red-600" onClick={async () => { await api(`/places/${encodeURIComponent(place.label)}`, { method: "DELETE" }); loadFavorites(); }}>Eliminar</button></div></div>)}</section>}
-      {recents.length > 0 && <section id="recientes" className="card"><b>Destinos recientes</b>{recents.map((place) => <button key={place.address} className="mt-2 w-full border text-left" onClick={() => selectPlace(place, "destination")}>{place.address}</button>)}</section>}
-      <section id="historial" className="card scroll-mt-4"><b>Mis viajes</b>{history.slice(0, 5).map((item) => <article className="mt-2 rounded-xl border p-2" key={item.id}><div className="flex justify-between"><span>{item.status}</span><b>{item.currency} {item.finalPrice || item.estimatedPrice}</b></div><p className="muted">{item.originAddress} → {item.destinationAddress}</p></article>)}{history.length === 0 && <p className="muted mt-2">Aún no tienes viajes.</p>}</section>
-      {destination && <button className="w-full border" onClick={estimate}>Calcular estimación</button>}
-      {quote && <section id="tarifa" className="card"><b>{quote.distanceKm} km · {quote.estimatedDurationMin} min</b><p className="mt-1 text-lg font-bold">{quote.currency} {quote.estimatedPrice}</p><p className="muted">Precio estimado Moto. Puede variar si cambia la ruta. Tarifa mínima: {quote.currency} {quote.minimumFare}.</p><label className="muted mt-2 block">Proponer otro monto<input type="number" min={quote.minimumFare} max={quote.maximumFare} value={proposedPrice} onChange={(event) => setProposedPrice(event.target.value)} placeholder={`Entre ${quote.minimumFare} y ${quote.maximumFare}`} /></label></section>}
-      {requestState === "idle" && <button className="primary w-full" disabled={!quote} onClick={() => setRequestState("confirm")}>Continuar</button>}
-      {requestState === "confirm" && <section className="card"><b>Confirmar solicitud</b><p className="muted">Moto · {destination?.address} · {quote?.currency} {proposedPrice || quote?.estimatedPrice}</p><div className="mt-3 flex gap-2"><button className="border flex-1" onClick={() => setRequestState("idle")}>Volver</button><button className="primary flex-1" onClick={publishRequest}>Publicar</button></div></section>}
-      {requestState === "sending" && <p className="card">Enviando solicitud…</p>}{requestState === "searching" && <section className="request-status-card"><p className="text-xs font-bold uppercase tracking-wider text-violet-200">Solicitud publicada</p><b className="mt-1 block text-xl">Buscando riders cercanos</b><p className="mt-1 text-sm text-slate-300">Te avisaremos cuando un rider acepte o proponga otra tarifa. La solicitud vence en 5 minutos.</p>{offers.map((offer) => <div className="mt-3 rounded-xl bg-white/10 p-3" key={offer.id}><b>{offer.rider.name}: {offer.currency} {offer.amount}</b><div className="mt-2 flex gap-2"><button className="primary flex-1" onClick={() => acceptOffer(offer.id)}>Aceptar oferta</button><button className="border border-white/20 flex-1" onClick={() => rejectOffer(offer.id)}>Rechazar</button></div></div>)}<button className="mt-4 w-full text-red-200 underline" onClick={() => setShowCancel(true)}>Cancelar solicitud</button></section>}{requestState === "accepted" && <section className="card border border-emerald-200 bg-emerald-50"><p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Viaje asignado</p><b className="mt-1 block text-lg">{activeTrip?.rider?.name || "Tu rider"}</b><p className="muted mt-1">{activeTrip?.rider?.riderProfile?.vehicleModel || "Motocicleta confirmada"}{activeTrip?.rider?.riderProfile?.vehiclePlate ? ` · ${activeTrip.rider.riderProfile.vehiclePlate}` : ""}</p><p className="mt-3 font-semibold">{activeTrip?.status === "RIDER_ON_THE_WAY" ? "El rider va en camino." : activeTrip?.status === "RIDER_ARRIVED" ? "Tu rider llegó al origen." : activeTrip?.status === "IN_PROGRESS" ? "El viaje está en curso. Confirma al llegar al destino." : "Rider asignado. Espera su llegada."}</p>{activeTrip?.status === "IN_PROGRESS" ? <button className="primary mt-3 w-full" onClick={complete}>Confirmar llegada y finalizar</button> : <button className="mt-3 w-full text-red-600" onClick={() => setShowCancel(true)}>Cancelar según las reglas operativas</button>}</section>}{requestState === "cancelled" && <button className="primary w-full" onClick={() => { setTripId(null); setActiveTrip(null); setRequestState("idle"); }}>Solicitar otra moto</button>}
-      {message && <p className="text-sm" role="status">{message}</p>}
-      {showCancel && <div className="fixed inset-0 z-[100] grid place-items-end bg-slate-950/60 p-4" onClick={() => setShowCancel(false)}><section className="w-full max-w-md rounded-3xl bg-white p-5" onClick={(event) => event.stopPropagation()}><p className="text-xs font-bold uppercase tracking-wider text-orange-600">Cancelar viaje</p><h2 className="mt-1 text-xl font-bold">¿Por qué deseas cancelar?</h2><div className="mt-4 space-y-2">{["Solo estoy probando la aplicación", "Problemas de seguridad", "El rider pidió cancelar", "Rider muy lejos", "Dirección errónea", "Otro"].map((reason) => <label key={reason} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 ${cancelReason === reason ? "border-orange-400 bg-orange-50" : ""}`}><input type="radio" name="cancelReason" checked={cancelReason === reason} onChange={() => setCancelReason(reason)} />{reason}</label>)}</div><div className="mt-4 flex gap-2"><button className="border flex-1" onClick={() => setShowCancel(false)}>Volver</button><button className="primary flex-1" onClick={cancel}>Cancelar viaje</button></div></section></div>}
-    </section>
-  </MobileAppShell></Guard>;
+  const getQuote = async () => {
+    if (!destination) return setMessage("Primero selecciona un destino.");
+    setBusy(true); setMessage("");
+    try { setQuote(await api<Quote>("/trips/estimate", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO" }) })); setStage("QUOTE"); }
+    catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const validAmount = useMemo(() => proposedPrice ? Number(proposedPrice) : undefined, [proposedPrice]);
+  const publish = async () => {
+    if (!destination || !quote) return;
+    if (validAmount !== undefined && (!Number.isFinite(validAmount) || validAmount < quote.minimumFare || validAmount > quote.maximumFare)) return setMessage(`Tu propuesta debe estar entre ${quote.minimumFare} y ${quote.maximumFare} ${quote.currency}.`);
+    setBusy(true); setMessage("");
+    try {
+      const trip = await api<{ id: string }>("/trips", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO", proposedPrice: validAmount }) });
+      setTripId(trip.id); setStage("SEARCHING"); setMessage("Solicitud enviada a riders cercanos.");
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const acceptOffer = async (offerId: string) => {
+    if (!tripId) return; setBusy(true);
+    try { await api(`/trips/${tripId}/offers/${offerId}/accept`, { method: "POST" }); setStage("TRACKING"); setMessage("Oferta aceptada. Tu rider irá hacia el origen."); }
+    catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const rejectOffer = async (offerId: string) => {
+    if (!tripId) return;
+    try { await api(`/trips/${tripId}/offers/${offerId}/reject`, { method: "POST" }); setOffers((current) => current.filter((offer) => offer.id !== offerId)); }
+    catch (error) { setMessage((error as Error).message); }
+  };
+  const cancel = async () => {
+    if (!tripId) return; setBusy(true);
+    try { await api(`/trips/${tripId}/cancel`, { method: "POST", body: JSON.stringify({ reason: cancelReason }) }); setShowCancel(false); setMessage("Solicitud cancelada."); reset(); }
+    catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const complete = async () => {
+    if (!tripId || activeTrip?.status !== "IN_PROGRESS") return;
+    setBusy(true);
+    try { await api(`/trips/${tripId}/complete`, { method: "POST" }); setMessage("Viaje finalizado. Puedes calificarlo desde Historial."); reset(); }
+    catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  };
+  const reset = () => { setTripId(null); setActiveTrip(null); setOffers([]); setDestination(null); setQuote(null); setProposedPrice(""); setStage("ROUTE"); setEditing("destination"); };
+  const selectFavorite = (place: SavedPlace) => selectPlace(place, "destination");
+  const price = quote ? (proposedPrice || quote.estimatedPrice) : null;
+
+  return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT"><div className="trip-flow pb-4">
+    {stage === "ROUTE" && <><section className="trip-flow-hero"><p>MOTOYA · PASAJERO</p><h1>¿A dónde te llevamos?</h1><span>Elige tu destino, revisa la tarifa y solicita una moto.</span></section>
+      <section className="route-editor"><div className="route-point"><i className="origin-dot" /><button onClick={() => setEditing("origin")}><small>Origen</small>{origin.address}</button><button aria-label="Usar ubicación actual" onClick={locate}>◎</button></div><div className="route-line" /><div className="route-point"><i className="destination-dot" /><button onClick={() => setEditing("destination")}><small>Destino</small>{destination?.address || "Buscar destino"}</button><button aria-label="Buscar destino" onClick={() => setShowSearch(true)}>＋</button></div></section>
+      {showSearch && <LocationSearch onSelect={(place) => selectPlace(place)} />}
+      <section className="relative mt-3"><MapView origin={origin} destination={destination || undefined} focus={focus} onPick={async (point) => selectPlace(await reverse(point))} onOriginMove={async (point) => selectPlace(await reverse(point), "origin")} onDestinationMove={async (point) => selectPlace(await reverse(point), "destination")} /><button className="map-recenter" aria-label="Centrar ubicación" onClick={locate}>◎</button></section>
+      {favorites.length > 0 && <section className="quick-destinations"><p>Destinos guardados</p><div>{favorites.slice(0, 4).map((place) => <button key={place.id} onClick={() => selectFavorite(place)}><b>{place.label}</b><span>{place.address}</span></button>)}</div></section>}
+      <button className="trip-main-action" disabled={!destination || busy} onClick={getQuote}>{busy ? "Calculando…" : "Ver tarifa de Moto"}<span>→</span></button></>}
+
+    {stage === "QUOTE" && quote && <><section className="flow-page-title"><button onClick={() => setStage("ROUTE")}>←</button><div><p>VIAJE MOTO</p><h1>Elige cómo pagar</h1></div></section><section className="relative mt-3"><MapView origin={origin} destination={destination || undefined} focus={destination || origin} /><div className="route-summary"><span>{origin.address}</span><i>↓</i><b>{destination?.address}</b></div></section><section className="moto-service-card"><div><p>MOTO · 1 PASAJERO</p><h2>Viaje estimado</h2><span>{quote.distanceKm.toFixed(1)} km · {quote.estimatedDurationMin} min</span></div><strong>{quote.currency} {quote.estimatedPrice}</strong></section><section className="offer-choice"><div><b>Tarifa calculada</b><span>Usar {quote.currency} {quote.estimatedPrice}</span><button className={!proposedPrice ? "chosen" : ""} onClick={() => setProposedPrice("")}>Seleccionar</button></div><div><b>Proponer mi tarifa</b><span>Entre {quote.currency} {quote.minimumFare} y {quote.maximumFare}</span><input type="number" value={proposedPrice} min={quote.minimumFare} max={quote.maximumFare} onChange={(event) => setProposedPrice(event.target.value)} placeholder="Ingresa tu monto" /></div></section><button className="trip-main-action" onClick={() => setStage("REVIEW")}>Continuar con {quote.currency} {price}<span>→</span></button></>}
+
+    {stage === "REVIEW" && quote && <><section className="flow-page-title"><button onClick={() => setStage("QUOTE")}>←</button><div><p>CONFIRMACIÓN</p><h1>Revisa tu viaje</h1></div></section><section className="confirmation-card"><div className="confirmation-route"><span>Origen</span><b>{origin.address}</b><i>↓</i><span>Destino</span><b>{destination?.address}</b></div><div className="confirmation-info"><span>Moto · 1 pasajero</span><span>{quote.distanceKm.toFixed(1)} km · {quote.estimatedDurationMin} min</span></div><div className="confirmation-price"><span>Tarifa propuesta</span><b>{quote.currency} {price}</b></div></section><p className="flow-notice">La tarifa puede variar si la ruta cambia. No se realizará ningún cobro en línea en este MVP.</p><button className="trip-main-action" disabled={busy} onClick={publish}>{busy ? "Publicando…" : "Confirmar y pedir moto"}<span>→</span></button></>}
+
+    {stage === "SEARCHING" && <><section className="relative mt-3"><MapView origin={origin} destination={destination || undefined} focus={origin} /></section><section className="searching-sheet"><div className="sheet-handle" /><p>SOLICITUD ENVIADA</p><h1>Buscando riders cercanos</h1><span>Tu solicitud está activa. Recibirás una oferta o una aceptación en cuanto haya disponibilidad.</span><div className="searching-pulse"><i /><i /><i /></div>{offers.length > 0 ? <div className="offer-list">{offers.map((offer) => <article key={offer.id}><p>{offer.rider.name}</p><b>{offer.currency} {offer.amount}</b><div><button className="trip-main-action" disabled={busy} onClick={() => acceptOffer(offer.id)}>Aceptar</button><button onClick={() => rejectOffer(offer.id)}>Rechazar</button></div></article>)}</div> : <p className="waiting-copy">Aún no hay ofertas. Puedes esperar o cancelar la solicitud.</p>}<button className="cancel-link" onClick={() => setShowCancel(true)}>Cancelar viaje</button></section></>}
+
+    {stage === "TRACKING" && activeTrip && <><section className="relative mt-3"><MapView origin={{ lat: activeTrip.originLat, lng: activeTrip.originLng }} destination={{ lat: activeTrip.destinationLat, lng: activeTrip.destinationLng }} focus={{ lat: activeTrip.originLat, lng: activeTrip.originLng }} /></section><section className="tracking-sheet"><p>VIAJE ACTUAL</p><h1>{activeTrip.rider?.name || "Rider asignado"}</h1><span>{activeTrip.rider?.riderProfile?.vehicleModel || "Motocicleta confirmada"}{activeTrip.rider?.riderProfile?.vehiclePlate ? ` · ${activeTrip.rider.riderProfile.vehiclePlate}` : ""}</span><div className="trip-status"><b>{activeTrip.status.replaceAll("_", " ")}</b><span>{statusCopy[activeTrip.status] || "Actualizando el estado de tu viaje."}</span></div><div className="tracking-route"><span>{activeTrip.originAddress}</span><i>↓</i><span>{activeTrip.destinationAddress}</span></div>{activeTrip.status === "IN_PROGRESS" ? <button className="trip-main-action" disabled={busy} onClick={complete}>{busy ? "Finalizando…" : "Confirmar llegada"}<span>→</span></button> : <button className="cancel-link" onClick={() => setShowCancel(true)}>Cancelar según las reglas operativas</button>}</section></>}
+    {message && <p className="flow-message" role="status">{message}</p>}
+    {showCancel && <div className="flow-modal" onClick={() => setShowCancel(false)}><section onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><p>CANCELAR SOLICITUD</p><h2>¿Por qué quieres cancelar?</h2>{cancellationReasons.map((reason) => <label key={reason} className={cancelReason === reason ? "selected" : ""}><input type="radio" checked={cancelReason === reason} onChange={() => setCancelReason(reason)} />{reason}</label>)}<button className="trip-main-action" disabled={busy} onClick={cancel}>Cancelar viaje</button></section></div>}
+  </div></MobileAppShell></Guard>;
 }
