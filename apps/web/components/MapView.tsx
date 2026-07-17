@@ -5,7 +5,7 @@ import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from "mapl
 
 export type MapPoint = { lat: number; lng: number; label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; className?: string };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
 const mapStyle: StyleSpecification = {
@@ -14,13 +14,20 @@ const mapStyle: StyleSpecification = {
   layers: [{ id: "osm", type: "raster", source: "osm", minzoom: 0, maxzoom: 19 }],
 };
 const routeKey = (origin?: MapPoint, destination?: MapPoint) => origin && destination ? `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}:${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}` : "";
-const markerSvg = (kind: "rider" | "passenger" | "destination" | "request") => {
-  const color = kind === "rider" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : "#7c3aed";
-  const shape = kind === "rider" ? '<path d="M5 16h14l-2.2-4H9l-4 4m4-4 1.2-3h3.6l2 3M7.2 16a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Zm10 0a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4ZM13 7h2"/>' : kind === "passenger" ? '<circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/>' : kind === "destination" ? '<path d="M7 3v18M8 4h10l-2.4 4L18 12H8"/>' : '<path d="M12 21s7-5.3 7-12a7 7 0 1 0-14 0c0 6.7 7 12 7 12Z"/><circle cx="12" cy="9" r="2"/>';
-  return `<span class="motoya-map-icon" style="background:${color}"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg></span>`;
+const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
+  if (!left || !right) return Number.POSITIVE_INFINITY;
+  const latitude = (left.lat + right.lat) / 2 * Math.PI / 180;
+  const latitudeDistance = (right.lat - left.lat) * 111_320;
+  const longitudeDistance = (right.lng - left.lng) * 111_320 * Math.cos(latitude);
+  return Math.hypot(latitudeDistance, longitudeDistance);
+};
+const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "request") => {
+  const color = kind === "rider" || kind === "riderWithPassenger" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : "#7c3aed";
+  const shape = kind === "rider" || kind === "riderWithPassenger" ? '<path d="M5 16h14l-2.2-4H9l-4 4m4-4 1.2-3h3.6l2 3M7.2 16a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Zm10 0a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4ZM13 7h2"/>' : kind === "passenger" ? '<circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/>' : kind === "destination" ? '<path d="M7 3v18M8 4h10l-2.4 4L18 12H8"/>' : '<path d="M12 21s7-5.3 7-12a7 7 0 1 0-14 0c0 6.7 7 12 7 12Z"/><circle cx="12" cy="9" r="2"/>';
+  return `<span class="motoya-map-icon${kind === "riderWithPassenger" ? " motoya-rider-passenger" : ""}" style="background:${color}"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}</span>`;
 };
 
-export function MapView({ origin, destination, rider, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion = 0, requests = [], onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, className }: Props) {
+export function MapView({ origin, destination, rider, riderWithPassenger = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion = 0, requests = [], onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, className }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -29,8 +36,8 @@ export function MapView({ origin, destination, rider, routeFrom, routeTo, second
   const lastFocus = useRef("");
   const [route, setRoute] = useState<MapPoint[]>([]);
   const [secondaryRoute, setSecondaryRoute] = useState<MapPoint[]>([]);
-  const props = useRef({ origin, destination, rider, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
-  props.current = { origin, destination, rider, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
+  const props = useRef({ origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
+  props.current = { origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
   const pickupLeg = routeFrom && routeTo && origin && destination && routeTo.lat === origin.lat && routeTo.lng === origin.lng;
   const nextRouteFrom = secondaryRouteFrom || (pickupLeg ? origin : undefined);
   const nextRouteTo = secondaryRouteTo || (pickupLeg ? destination : undefined);
@@ -63,6 +70,9 @@ export function MapView({ origin, destination, rider, routeFrom, routeTo, second
     if (!instance || !lib || !instance.isStyleLoaded()) return;
     markers.current.forEach((marker) => marker.remove()); markers.current = [];
     const current = props.current;
+    const routeGoesToDestination = Boolean(current.routeTo && current.destination && current.routeTo.lat === current.destination.lat && current.routeTo.lng === current.destination.lng);
+    const riderNearPickup = distanceMeters(current.rider, current.origin) <= 80;
+    const riderWithPassenger = current.riderWithPassenger || routeGoesToDestination || Boolean(current.onDestinationClick) || (riderNearPickup && !current.onOriginClick);
     const from = current.routeFrom || current.origin; const to = current.routeTo || current.destination;
     const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: (route.length > 1 ? route : from && to ? [from, to] : []).map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
@@ -74,7 +84,7 @@ export function MapView({ origin, destination, rider, routeFrom, routeTo, second
     const secondarySource = instance.getSource("motoya-secondary-route") as GeoJSONSource | undefined;
     if (secondarySource) secondarySource.setData(secondaryData);
     else { instance.addSource("motoya-secondary-route", { type: "geojson", data: secondaryData }); instance.addLayer({ id: "motoya-secondary-route-line", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#a855f7", "line-width": 4, "line-opacity": .76, "line-dasharray": [2, 1.5] } }); }
-    const addMarker = (point: MapPoint | undefined, kind: "rider" | "passenger" | "destination" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void) => {
+    const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void) => {
       if (!point) return;
       const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}`; element.setAttribute("aria-label", tooltip); element.innerHTML = markerSvg(kind);
       if (clicked) element.addEventListener("click", clicked);
@@ -82,9 +92,9 @@ export function MapView({ origin, destination, rider, routeFrom, routeTo, second
       if (moved) marker.on("dragend", () => { const next = marker.getLngLat(); moved({ lat: next.lat, lng: next.lng }); });
       markers.current.push(marker);
     };
-    addMarker(current.origin, "passenger", Boolean(current.onOriginMove), current.onOriginClick ? "Confirmar llegada al pasajero" : "Pasajero · punto de recogida", current.onOriginMove, current.onOriginClick);
+    if (!riderWithPassenger) addMarker(current.origin, "passenger", Boolean(current.onOriginMove), current.onOriginClick ? "Confirmar llegada al pasajero" : "Pasajero · punto de recogida", current.onOriginMove, current.onOriginClick);
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), current.onDestinationClick ? "Iniciar viaje hacia el destino" : "Destino", current.onDestinationMove, current.onDestinationClick);
-    addMarker(current.rider, "rider", false, "Rider · motocicleta");
+    addMarker(current.rider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
     const visibleRoute = [...route, ...secondaryRoute];
     const key = `${to?.lat.toFixed(5) || ""},${to?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
@@ -108,6 +118,6 @@ export function MapView({ origin, destination, rider, routeFrom, routeTo, second
     render();
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
     if (map.current && focus && (route.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
-  }, [origin, destination, rider, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion, requests, route, secondaryRoute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
+  }, [origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion, requests, route, secondaryRoute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
   return <div ref={host} className={`relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`} aria-label="Mapa interactivo" />;
 }

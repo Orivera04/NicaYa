@@ -77,6 +77,7 @@ export default function ClientPage() {
       try {
         const trip = await api<ActiveTrip>(`/trips/${tripId}`);
         setActiveTrip(trip);
+        if (trip.riderLat != null && trip.riderLng != null) setLiveRider({ tripId: trip.id, lat: trip.riderLat, lng: trip.riderLng, recordedAt: trip.riderLocationUpdatedAt || new Date().toISOString() });
         if (trip.status === "REQUESTED") {
           setStage("SEARCHING");
           setOffers(await api<Offer[]>(`/trips/${tripId}/offers`));

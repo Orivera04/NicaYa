@@ -63,7 +63,7 @@ export default function RiderPage() {
   }, [activeTrip, profile?.available, publishLocation]);
   useEffect(() => { void load(); refreshLocation(); }, [load, refreshLocation]);
   useEffect(() => { lastLiveLocation.current = null; }, [activeTrip?.id]);
-  useEffect(() => { const timer = window.setInterval(() => { void load(); if (profile?.available) refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, profile?.available, refreshLocation]);
+  useEffect(() => { const timer = window.setInterval(() => { void load(); if (profile?.available || activeTrip) refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, profile?.available, activeTrip?.id, refreshLocation]);
   useEffect(() => {
     if (!activeTrip || !navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(({ coords }) => {
