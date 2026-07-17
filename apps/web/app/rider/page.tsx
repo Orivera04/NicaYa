@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { Guard } from "@/components/Guard";
 import { MapPoint, MapView } from "@/components/MapView";
@@ -34,6 +34,7 @@ export default function RiderPage() {
   const [counterOffer, setCounterOffer] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const centeredFromGps = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -48,7 +49,7 @@ export default function RiderPage() {
   const refreshLocation = useCallback(() => {
     if (!navigator.geolocation) return setMessage("Activa GPS para recibir solicitudes cercanas.");
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
-      const next = { lat: coords.latitude, lng: coords.longitude }; setPosition(next); setFocus(next);
+      const next = { lat: coords.latitude, lng: coords.longitude }; setPosition(next); if (!centeredFromGps.current) { setFocus(next); centeredFromGps.current = true; }
       if (profile?.available) try { await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(next) }); } catch { /* Retried on the next scheduled update. */ }
     }, () => setMessage("No pudimos actualizar tu GPS. Revisa los permisos."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
   }, [profile?.available]);
