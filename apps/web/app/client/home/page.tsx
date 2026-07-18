@@ -47,6 +47,14 @@ export default function ClientHomePage() {
     </Link>
 
     <section className="mt-5">
+      <div className="mb-2 flex items-end justify-between">
+        <div><p className="text-xs font-black tracking-[.14em] text-orange-500">NOVEDADES</p><h2 className="mt-1 text-xl font-black tracking-tight text-slate-900">Lo nuevo para ti</h2></div>
+        <span className="rounded-full bg-orange-100 px-2.5 py-1 text-[.65rem] font-black tracking-wide text-orange-700">MOTOYA</span>
+      </div>
+      <AdvertisementCarousel />
+    </section>
+
+    <section className="mt-5">
       <p className="mb-2 text-xs font-black uppercase tracking-wider text-slate-400">Accesos rápidos</p>
       <div className="grid grid-cols-4 gap-2">
         {quickLinks.map((item) => (
@@ -80,12 +88,5 @@ export default function ClientHomePage() {
       </div> : <p className="card text-sm text-slate-500">Aún no tienes viajes. Cuando solicites una moto, aparecerá aquí.</p>}
     </section>
 
-    <section className="mt-5">
-      <div className="mb-2 flex items-end justify-between">
-        <div><p className="text-xs font-black tracking-[.14em] text-orange-500">NOVEDADES</p><h2 className="mt-1 text-xl font-black tracking-tight text-slate-900">Lo nuevo para ti</h2></div>
-        <span className="rounded-full bg-orange-100 px-2.5 py-1 text-[.65rem] font-black tracking-wide text-orange-700">MOTOYA</span>
-      </div>
-      <AdvertisementCarousel />
-    </section>
   </MobileAppShell></Guard>;
 }
