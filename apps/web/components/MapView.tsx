@@ -6,16 +6,26 @@ import { getMapTileUrls, MAP_TILE_THEMES, type MapTheme } from "@/config/map.con
 
 export type MapPoint = { lat: number; lng: number; label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; className?: string };
+type FitPadding = { top: number; right: number; bottom: number; left: number };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
 const createMapStyle = (theme: MapTheme, devicePixelRatio = 1): StyleSpecification => {
-  const tileConfig = MAP_TILE_THEMES[theme];
+  const positron = MAP_TILE_THEMES.positron;
+  const voyager = MAP_TILE_THEMES.voyager;
+  const dark = MAP_TILE_THEMES.dark;
   return {
     version: 8,
-    sources: { "motoya-base-map": { type: "raster", tiles: getMapTileUrls(tileConfig, devicePixelRatio), tileSize: 256, attribution: tileConfig.attribution, maxzoom: tileConfig.maxZoom } },
-    layers: [{ id: "motoya-base-map", type: "raster", source: "motoya-base-map", minzoom: 0, maxzoom: tileConfig.maxZoom }],
+    sources: {
+      "motoya-base-positron": { type: "raster", tiles: getMapTileUrls(positron, devicePixelRatio), tileSize: 256, attribution: positron.attribution, maxzoom: positron.maxZoom },
+      "motoya-base-voyager": { type: "raster", tiles: getMapTileUrls(voyager, devicePixelRatio), tileSize: 256, attribution: voyager.attribution, maxzoom: voyager.maxZoom },
+      "motoya-base-dark": { type: "raster", tiles: getMapTileUrls(dark, devicePixelRatio), tileSize: 256, attribution: dark.attribution, maxzoom: dark.maxZoom },
+    },
+    layers: (Object.keys(MAP_TILE_THEMES) as MapTheme[]).map((name) => ({ id: `motoya-base-${name}`, type: "raster" as const, source: `motoya-base-${name}`, minzoom: 0, maxzoom: MAP_TILE_THEMES[name].maxZoom, layout: { visibility: name === theme ? "visible" as const : "none" as const } })),
   };
+};
+const applyMapTheme = (instance: MapLibreMap, theme: MapTheme) => {
+  (Object.keys(MAP_TILE_THEMES) as MapTheme[]).forEach((name) => instance.setLayoutProperty(`motoya-base-${name}`, "visibility", name === theme ? "visible" : "none"));
 };
 const routeKey = (origin?: MapPoint, destination?: MapPoint) => origin && destination ? `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}:${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}` : "";
 const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
@@ -27,11 +37,11 @@ const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
 };
 const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "request") => {
   const color = kind === "rider" || kind === "riderWithPassenger" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : "#7c3aed";
-  const shape = kind === "rider" || kind === "riderWithPassenger" ? '<path d="M5 16h14l-2.2-4H9l-4 4m4-4 1.2-3h3.6l2 3M7.2 16a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4Zm10 0a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4ZM13 7h2"/>' : kind === "passenger" ? '<circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/>' : kind === "destination" ? '<path d="M7 3v18M8 4h10l-2.4 4L18 12H8"/>' : '<path d="M12 21s7-5.3 7-12a7 7 0 1 0-14 0c0 6.7 7 12 7 12Z"/><circle cx="12" cy="9" r="2"/>';
+  const shape = kind === "rider" || kind === "riderWithPassenger" ? '<circle cx="6.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/><path d="m6.5 17.5 4.2-7h3.6l3.2 7M10.7 10.5 9 8h4.3m.6 2.5 2.2-2.6M11 14h5.2"/>' : kind === "passenger" ? '<circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/>' : kind === "destination" ? '<path d="M7 3v18M8 4h10l-2.4 4L18 12H8"/>' : '<path d="M12 21s7-5.3 7-12a7 7 0 1 0-14 0c0 6.7 7 12 7 12Z"/><circle cx="12" cy="9" r="2"/>';
   return `<span class="motoya-map-icon${kind === "riderWithPassenger" ? " motoya-rider-passenger" : ""}" style="background:${color}"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}</span>`;
 };
 
-export function MapView({ origin, destination, rider, riderWithPassenger = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion = 0, requests = [], onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, className }: Props) {
+export function MapView({ origin, destination, rider, riderWithPassenger = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, className }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -44,6 +54,8 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
   const [mapError, setMapError] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
   const [theme, setTheme] = useState<MapTheme>("positron");
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const props = useRef({ origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
   props.current = { origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
   const pickupLeg = routeFrom && routeTo && origin && destination && routeTo.lat === origin.lat && routeTo.lng === origin.lng;
@@ -106,7 +118,8 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
     const visibleRoute = [...route, ...secondaryRoute];
     const key = `${to?.lat.toFixed(5) || ""},${to?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
-    if (visibleRoute.length > 1 && key && fittedRoute.current !== key) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: 54, maxZoom: 15, duration: 700 }); fittedRoute.current = key; }
+    const paddingKey = fitPadding ? `${fitPadding.top}:${fitPadding.right}:${fitPadding.bottom}:${fitPadding.left}` : "default";
+    if (visibleRoute.length > 1 && key && fittedRoute.current !== `${key}:${paddingKey}`) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: fitPadding || 54, maxZoom: 15, duration: 700 }); fittedRoute.current = `${key}:${paddingKey}`; }
   };
 
   useEffect(() => {
@@ -119,23 +132,20 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
       const instance = new lib.Map({ container: host.current, style: mapStyle, center: [center.lng, center.lat], zoom: 13, dragRotate: true, pitchWithRotate: false, touchZoomRotate: true });
       instance.addControl(new lib.NavigationControl({ showCompass: true, showZoom: true, visualizePitch: false }), "bottom-right");
       instance.on("click", (event) => props.current.onPick?.({ lat: event.lngLat.lat, lng: event.lngLat.lng, label: "Ubicación seleccionada" }));
-      const ready = () => { setLoading(false); setMapError(false); render(); };
+      const ready = () => { applyMapTheme(instance, themeRef.current); setLoading(false); setMapError(false); render(); };
       instance.on("load", ready);
       instance.on("style.load", ready);
-      instance.on("error", (event) => { if ((event as { sourceId?: string }).sourceId === "motoya-base-map") { setLoading(false); setMapError(true); } });
+      instance.on("error", (event) => { if ((event as { sourceId?: string }).sourceId?.startsWith("motoya-base-")) { setLoading(false); setMapError(true); } });
       map.current = instance;
     }).catch(() => { if (active) { setLoading(false); setMapError(true); } });
     return () => { active = false; markers.current.forEach((marker) => marker.remove()); markers.current = []; map.current?.remove(); map.current = null; };
   }, []);
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("motoya-map-theme");
-    if (savedTheme === "positron" || savedTheme === "voyager") setTheme(savedTheme);
+    if (savedTheme === "positron" || savedTheme === "voyager" || savedTheme === "dark") setTheme(savedTheme);
   }, []);
   useEffect(() => {
-    if (!map.current) return;
-    setLoading(true);
-    setMapError(false);
-    map.current.setStyle(createMapStyle(theme, window.devicePixelRatio));
+    if (map.current?.isStyleLoaded()) applyMapTheme(map.current, theme);
   }, [theme]);
   useEffect(() => {
     render();
@@ -149,7 +159,7 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
     map.current.setStyle(createMapStyle(theme, window.devicePixelRatio));
   };
   const switchTheme = () => {
-    const nextTheme: MapTheme = theme === "positron" ? "voyager" : "positron";
+    const nextTheme: MapTheme = theme === "positron" ? "voyager" : theme === "voyager" ? "dark" : "positron";
     window.localStorage.setItem("motoya-map-theme", nextTheme);
     setTheme(nextTheme);
   };
@@ -162,8 +172,8 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
   return <div className={`map-view relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`}>
     <div ref={host} className="map-view__canvas" aria-label="Mapa interactivo" />
     <div className="map-action-controls" aria-label="Controles de mapa">
-      <button type="button" className="map-theme-toggle" onClick={switchTheme} aria-label={theme === "positron" ? "Usar mapa con más color" : "Usar mapa claro"} title={theme === "positron" ? "Mapa con más color" : "Mapa claro"}>◐</button>
-      <button type="button" className="map-focus-control" onClick={focusMap} aria-label="Centrar el foco del mapa" title="Centrar mapa">◎</button>
+      <button type="button" className="map-theme-toggle" data-theme={theme} onClick={switchTheme} aria-label="Cambiar tema del mapa" title={theme === "positron" ? "Mapa con más color" : theme === "voyager" ? "Mapa oscuro" : "Mapa claro"}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Zm-8 9 8 4.5 8-4.5M4 16.5 12 21l8-4.5" /></svg></button>
+      <button type="button" className="map-focus-control" onClick={focusMap} aria-label="Centrar el foco del mapa" title="Centrar mapa"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg></button>
     </div>
     {loading && <div className="map-state map-state--loading" role="status"><i /><span>Cargando mapa…</span></div>}
     {routeUnavailable && !loading && <div className="map-state map-state--route" role="status">No pudimos trazar la ruta. Puedes ajustar los puntos o continuar con la estimación.</div>}

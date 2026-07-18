@@ -1,4 +1,4 @@
-import { createMapTileConfig, getMapTileUrls, MAP_TILE_CONFIG } from "@/config/map.config";
+import { createMapTileConfig, getMapTileUrls, MAP_TILE_CONFIG, MAP_TILE_THEMES } from "@/config/map.config";
 
 describe("Carto Positron map tiles", () => {
   test("uses Carto Positron and the required attribution by default", () => {
@@ -11,5 +11,10 @@ describe("Carto Positron map tiles", () => {
   test("allows a public provider URL override and resolves retina URLs", () => {
     const custom = createMapTileConfig("https://{s}.example.test/{z}/{x}/{y}{r}.png");
     expect(getMapTileUrls(custom, 2)[3]).toBe("https://d.example.test/{z}/{x}/{y}@2x.png");
+  });
+
+  test("offers color and dark Carto themes without replacing the configured default", () => {
+    expect(MAP_TILE_THEMES.voyager.url).toContain("rastertiles/voyager");
+    expect(MAP_TILE_THEMES.dark.url).toContain("dark_all");
   });
 });
