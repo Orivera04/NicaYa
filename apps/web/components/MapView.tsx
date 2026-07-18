@@ -8,7 +8,7 @@ import { getSession } from "@/lib/api";
 export type MapPoint = { lat: number; lng: number; label?: string; heading?: number; accuracy?: number };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
 type FitPadding = { top: number; right: number; bottom: number; left: number };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; className?: string };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; showFocusControl?: boolean; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
 const createMapStyle = (theme: MapTheme, devicePixelRatio = 1): StyleSpecification => {
@@ -44,10 +44,10 @@ const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destina
   const color = kind === "rider" || kind === "riderWithPassenger" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : "#7c3aed";
   const shape = kind === "rider" || kind === "riderWithPassenger" ? '<circle cx="6.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/><path d="m6.5 17.5 4.2-7h3.6l3.2 7M10.7 10.5 9 8h4.3m.6 2.5 2.2-2.6M11 14h5.2"/>' : kind === "passenger" ? '<circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/>' : kind === "destination" ? '<path d="M7 3v18M8 4h10l-2.4 4L18 12H8"/>' : '<path d="M12 21s7-5.3 7-12a7 7 0 1 0-14 0c0 6.7 7 12 7 12Z"/><circle cx="12" cy="9" r="2"/>';
   const direction = kind === "rider" || kind === "riderWithPassenger" ? `<span class="motoya-direction-beam" style="--heading:${Number.isFinite(heading) ? heading : 0}deg"></span>` : "";
-  return `<span class="motoya-map-icon${kind === "rider" || kind === "riderWithPassenger" ? " motoya-rider-marker" : ""}${kind === "riderWithPassenger" ? " motoya-rider-passenger" : ""}${riderConnected && (kind === "rider" || kind === "riderWithPassenger") ? " motoya-rider-live" : ""}" style="background:${color}">${direction}<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}</span>`;
+  return `<span class="motoya-map-icon${kind === "rider" || kind === "riderWithPassenger" ? " motoya-rider-marker" : ""}${kind === "passenger" ? " motoya-passenger-marker" : ""}${kind === "riderWithPassenger" ? " motoya-rider-passenger" : ""}${riderConnected && (kind === "rider" || kind === "riderWithPassenger") ? " motoya-rider-live" : ""}" style="background:${color}">${direction}<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}</span>`;
 };
 
-export function MapView({ origin, destination, rider, riderConnected = false, riderWithPassenger = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, className }: Props) {
+export function MapView({ origin, destination, rider, riderConnected = false, riderWithPassenger = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, showFocusControl = false, className }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -63,8 +63,8 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const [focusLost, setFocusLost] = useState(false);
   const themeRef = useRef(theme);
   themeRef.current = theme;
-  const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
-  props.current = { origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
+  const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
+  props.current = { origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
   const pickupLeg = routeFrom && routeTo && origin && destination && routeTo.lat === origin.lat && routeTo.lng === origin.lng;
   const nextRouteFrom = secondaryRouteFrom || (pickupLeg ? origin : undefined);
   const nextRouteTo = secondaryRouteTo || (pickupLeg ? destination : undefined);
@@ -140,9 +140,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addControl(new lib.NavigationControl({ showCompass: true, showZoom: true, visualizePitch: false }), "bottom-right");
       instance.on("click", (event) => props.current.onPick?.({ lat: event.lngLat.lat, lng: event.lngLat.lng, label: "Ubicación seleccionada" }));
       const updateFocusVisibility = () => {
-        const currentRider = props.current.rider;
-        if (!currentRider) return setFocusLost(false);
-        setFocusLost(!instance.getBounds().contains([currentRider.lng, currentRider.lat]));
+        const point = props.current.rider || props.current.focus || props.current.origin;
+        if (!point) return setFocusLost(false);
+        setFocusLost(!instance.getBounds().contains([point.lng, point.lat]));
       };
       const ready = () => { applyMapTheme(instance, themeRef.current); setLoading(false); setMapError(false); render(); updateFocusVisibility(); };
       instance.on("load", ready);
@@ -187,7 +187,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     <div ref={host} className="map-view__canvas" aria-label="Mapa interactivo" />
     <div className="map-action-controls" aria-label="Controles de mapa">
       <button type="button" className="map-theme-toggle" data-theme={theme} onClick={switchTheme} aria-label="Cambiar tema del mapa" title={theme === "positron" ? "Mapa con más color" : theme === "voyager" ? "Mapa oscuro" : "Mapa claro"}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Zm-8 9 8 4.5 8-4.5M4 16.5 12 21l8-4.5" /></svg></button>
-      {focusLost && <button type="button" className="map-focus-control" onClick={focusMap} aria-label="Centrar el foco del mapa" title="Centrar mapa"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg></button>}
+      {(focusLost || showFocusControl) && <button type="button" className="map-focus-control" onClick={focusMap} aria-label="Centrar el foco del mapa" title="Centrar mapa"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg></button>}
     </div>
     {loading && <div className="map-state map-state--loading" role="status"><i /><span>Cargando mapa…</span></div>}
     {routeUnavailable && !loading && <div className="map-state map-state--route" role="status">No pudimos trazar la ruta. Puedes ajustar los puntos o continuar con la estimación.</div>}
