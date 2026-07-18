@@ -1,0 +1,5 @@
+# Override local: la máquina ya tiene un PostgreSQL nativo en 5432
+services:
+  postgres:
+    ports: !override
+      - "5433:5432"
