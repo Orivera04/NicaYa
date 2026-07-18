@@ -71,7 +71,6 @@ export function AdvertisementCarousel() {
     </div>
     {items.length > 1 && <div className="advertisement-carousel__pagination" role="tablist" aria-label="Seleccionar novedad">
       {items.map((item, itemIndex) => <button key={item.id} type="button" role="tab" aria-selected={itemIndex === index} aria-label={`Ver novedad ${itemIndex + 1}`} onClick={() => goTo(itemIndex)} className={itemIndex === index ? "is-active" : ""} />)}
-      <span>Desliza para ver más</span>
     </div>}
   </section>;
 }
