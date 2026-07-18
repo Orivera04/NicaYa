@@ -1,4 +1,7 @@
 const defaultTileUrl = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+const voyagerTileUrl = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+
+export type MapTheme = "positron" | "voyager";
 
 export type MapTileConfig = {
   url: string;
@@ -15,6 +18,10 @@ export const createMapTileConfig = (url = process.env.NEXT_PUBLIC_MAP_TILE_URL |
 });
 
 export const MAP_TILE_CONFIG = createMapTileConfig();
+export const MAP_TILE_THEMES: Record<MapTheme, MapTileConfig> = {
+  positron: MAP_TILE_CONFIG,
+  voyager: createMapTileConfig(voyagerTileUrl),
+};
 
 /** MapLibre receives an array of concrete URLs instead of Leaflet's `{s}` template. */
 export const getMapTileUrls = (config = MAP_TILE_CONFIG, devicePixelRatio = 1) => {
