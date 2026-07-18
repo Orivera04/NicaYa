@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 import { getMapTileUrls, MAP_TILE_THEMES, type MapTheme } from "@/config/map.config";
+import { getSession } from "@/lib/api";
 
 export type MapPoint = { lat: number; lng: number; label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
@@ -26,6 +27,10 @@ const createMapStyle = (theme: MapTheme, devicePixelRatio = 1): StyleSpecificati
 };
 const applyMapTheme = (instance: MapLibreMap, theme: MapTheme) => {
   (Object.keys(MAP_TILE_THEMES) as MapTheme[]).forEach((name) => instance.setLayoutProperty(`motoya-base-${name}`, "visibility", name === theme ? "visible" : "none"));
+};
+const themeStorageKey = () => {
+  const user = getSession()?.user;
+  return user ? `motoya-map-theme:${user.role.toLowerCase()}:${user.id}` : "motoya-map-theme:guest";
 };
 const routeKey = (origin?: MapPoint, destination?: MapPoint) => origin && destination ? `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}:${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}` : "";
 const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
@@ -141,7 +146,7 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
     return () => { active = false; markers.current.forEach((marker) => marker.remove()); markers.current = []; map.current?.remove(); map.current = null; };
   }, []);
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem("motoya-map-theme");
+    const savedTheme = window.localStorage.getItem(themeStorageKey());
     if (savedTheme === "positron" || savedTheme === "voyager" || savedTheme === "dark") setTheme(savedTheme);
   }, []);
   useEffect(() => {
@@ -160,7 +165,7 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
   };
   const switchTheme = () => {
     const nextTheme: MapTheme = theme === "positron" ? "voyager" : theme === "voyager" ? "dark" : "positron";
-    window.localStorage.setItem("motoya-map-theme", nextTheme);
+    window.localStorage.setItem(themeStorageKey(), nextTheme);
     setTheme(nextTheme);
   };
   const focusMap = () => {
