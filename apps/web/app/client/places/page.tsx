@@ -1,4 +1,37 @@
 "use client";
-import Link from "next/link";import { useEffect, useState } from "react";import { Guard } from "@/components/Guard";import { MobileAppShell } from "@/components/MobileAppShell";import { api } from "@/lib/api";
-type Place={id:string;label:string;address:string;reference?:string|null};
-export default function ClientPlacesPage(){const [places,setPlaces]=useState<Place[]>([]);const [message,setMessage]=useState("");const load=()=>api<Place[]>("/places").then(setPlaces).catch(e=>setMessage(e.message));useEffect(()=>{load()},[]);return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT"><section className="mt-4 rounded-3xl bg-slate-950 p-5 text-white"><p className="text-xs font-bold tracking-wider text-orange-300">DESTINOS</p><h1 className="mt-1 text-2xl font-black">Lugares guardados</h1><p className="mt-2 text-sm text-slate-300">Guarda cualquier destino con el nombre que prefieras.</p><Link className="mt-4 inline-block rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold" href="/client">Agregar desde el mapa →</Link></section><section className="mt-4 space-y-3">{places.map((place,index)=><article className="card" key={place.id}><div className="flex gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-orange-500/10 font-black text-orange-600">{index+1}</span><div className="min-w-0 flex-1"><b>{place.label}</b><p className="muted mt-1">{place.address}</p>{place.reference?<p className="mt-1 text-xs text-slate-500">{place.reference}</p>:null}</div></div><button className="mt-3 text-sm font-bold text-red-600" onClick={async()=>{await api(`/places/${encodeURIComponent(place.label)}`,{method:"DELETE"});load()}}>Eliminar lugar</button></article>)}{!places.length?<p className="card mt-3">Aún no guardas lugares. Puedes hacerlo desde el mapa o desde un viaje anterior.</p>:null}</section>{message?<p className="mt-3 text-sm" role="status">{message}</p>:null}</MobileAppShell></Guard>}
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Guard } from "@/components/Guard";
+import { MobileAppShell } from "@/components/MobileAppShell";
+import { api } from "@/lib/api";
+
+type Place = { id: string; label: string; address: string; reference?: string | null };
+
+export default function ClientPlacesPage() {
+  const [places, setPlaces] = useState<Place[]>([]);
+  const [message, setMessage] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
+  const load = () => api<Place[]>("/places").then(setPlaces).catch((error) => setMessage(error.message));
+
+  useEffect(() => { load(); }, []);
+
+  const remove = async (place: Place) => {
+    setRemoving(place.id);
+    try {
+      await api(`/places/${encodeURIComponent(place.label)}`, { method: "DELETE" });
+      setPlaces((current) => current.filter((item) => item.id !== place.id));
+      setMessage(`${place.label} fue eliminado.`);
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setRemoving(null); }
+  };
+
+  return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT">
+    <section className="saved-places-hero mt-4"><div><p>DESTINOS</p><h1>Lugares guardados</h1><span>Ten tus direcciones frecuentes siempre a mano.</span></div><b>{places.length}<small>{places.length === 1 ? "lugar" : "lugares"}</small></b><Link href="/client">Agregar desde el mapa <i>→</i></Link></section>
+    <section className="saved-places-list">
+      {places.map((place, index) => <article className="saved-place-card" key={place.id}><span className="saved-place-card__icon">{index < 2 ? (index === 0 ? "⌂" : "★") : "⌖"}</span><div className="saved-place-card__body"><p>DESTINO GUARDADO</p><h2>{place.label}</h2><span>{place.address}</span>{place.reference && <small>Referencia: {place.reference}</small>}</div><button type="button" className="saved-place-card__delete" disabled={removing === place.id} aria-label={`Eliminar ${place.label}`} onClick={() => void remove(place)}>{removing === place.id ? "…" : "×"}</button></article>)}
+      {!places.length && <article className="saved-places-empty"><span>⌖</span><h2>Aún no tienes destinos</h2><p>Cuando ubiques tu origen y destino en el mapa, podrás guardar tus lugares con el nombre que prefieras.</p><Link href="/client">Buscar una dirección <i>→</i></Link></article>}
+    </section>
+    {message && <p className="flow-message" role="status">{message}</p>}
+  </MobileAppShell></Guard>;
+}
