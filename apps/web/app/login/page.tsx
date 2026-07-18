@@ -68,7 +68,7 @@ export default function LoginPage() {
 
       <div className="flex flex-1 items-center justify-center p-5 lg:p-12">
         <div className="w-full max-w-md">
-          <Link className="inline-block text-sm font-bold text-slate-300 lg:hidden" href="/">&larr; MotoYa</Link>
+          <span className="inline-block text-sm font-bold text-slate-300 lg:hidden">MotoYa</span>
 
           <div className="relative mt-4 overflow-hidden rounded-3xl bg-gradient-to-br from-orange-500/25 via-slate-900 to-slate-950 p-5 lg:hidden">
             <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full border border-orange-400/25" />
