@@ -2,17 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
+import { getMapTileUrls, MAP_TILE_CONFIG } from "@/config/map.config";
 
 export type MapPoint = { lat: number; lng: number; label?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
 type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
-const mapStyle: StyleSpecification = {
+const createMapStyle = (devicePixelRatio = 1): StyleSpecification => ({
   version: 8,
-  sources: { osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256, attribution: "© OpenStreetMap" } },
-  layers: [{ id: "osm", type: "raster", source: "osm", minzoom: 0, maxzoom: 19 }],
-};
+  sources: { "carto-positron": { type: "raster", tiles: getMapTileUrls(MAP_TILE_CONFIG, devicePixelRatio), tileSize: 256, attribution: MAP_TILE_CONFIG.attribution, maxzoom: MAP_TILE_CONFIG.maxZoom } },
+  layers: [{ id: "carto-positron", type: "raster", source: "carto-positron", minzoom: 0, maxzoom: MAP_TILE_CONFIG.maxZoom }],
+});
 const routeKey = (origin?: MapPoint, destination?: MapPoint) => origin && destination ? `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}:${destination.lat.toFixed(5)},${destination.lng.toFixed(5)}` : "";
 const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
   if (!left || !right) return Number.POSITIVE_INFINITY;
@@ -36,6 +37,9 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
   const lastFocus = useRef("");
   const [route, setRoute] = useState<MapPoint[]>([]);
   const [secondaryRoute, setSecondaryRoute] = useState<MapPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [mapError, setMapError] = useState(false);
+  const [routeUnavailable, setRouteUnavailable] = useState(false);
   const props = useRef({ origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
   props.current = { origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
   const pickupLeg = routeFrom && routeTo && origin && destination && routeTo.lat === origin.lat && routeTo.lng === origin.lng;
@@ -45,12 +49,12 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
   useEffect(() => {
     const from = routeFrom || origin; const to = routeTo || destination;
     const key = routeKey(from, to);
-    if (!key || !from || !to) { setRoute([]); return; }
+    if (!key || !from || !to) { setRoute([]); setRouteUnavailable(false); return; }
     let live = true; const controller = new AbortController();
     fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Route unavailable")))
-      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) setRoute(points); })
-      .catch(() => { if (live) setRoute([]); });
+      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) { setRoute(points); setRouteUnavailable(points.length < 2); } })
+      .catch(() => { if (live) { setRoute([]); setRouteUnavailable(true); } });
     return () => { live = false; controller.abort(); };
   }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, routeFrom?.lat, routeFrom?.lng, routeTo?.lat, routeTo?.lng]);
 
@@ -107,11 +111,16 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
       if (!host.current || !active) return;
       runtime.current = lib;
       const center = rider || origin || { lat: 12.1364, lng: -86.2514 };
+      const mapStyle = createMapStyle(window.devicePixelRatio);
       const instance = new lib.Map({ container: host.current, style: mapStyle, center: [center.lng, center.lat], zoom: 13, dragRotate: true, pitchWithRotate: false, touchZoomRotate: true });
       instance.addControl(new lib.NavigationControl({ showCompass: true, showZoom: true, visualizePitch: false }), "bottom-right");
       instance.on("click", (event) => props.current.onPick?.({ lat: event.lngLat.lat, lng: event.lngLat.lng, label: "Ubicación seleccionada" }));
-      instance.on("load", render); map.current = instance;
-    });
+      const ready = () => { setLoading(false); setMapError(false); render(); };
+      instance.on("load", ready);
+      instance.on("style.load", ready);
+      instance.on("error", (event) => { if ((event as { sourceId?: string }).sourceId === "carto-positron") { setLoading(false); setMapError(true); } });
+      map.current = instance;
+    }).catch(() => { if (active) { setLoading(false); setMapError(true); } });
     return () => { active = false; markers.current.forEach((marker) => marker.remove()); markers.current = []; map.current?.remove(); map.current = null; };
   }, []);
   useEffect(() => {
@@ -119,5 +128,17 @@ export function MapView({ origin, destination, rider, riderWithPassenger = false
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
     if (map.current && focus && (route.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
   }, [origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, focus, recenterVersion, requests, route, secondaryRoute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
-  return <div ref={host} className={`relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`} aria-label="Mapa interactivo" />;
+  const retryMap = () => {
+    if (!map.current) return;
+    setLoading(true);
+    setMapError(false);
+    map.current.setStyle(createMapStyle(window.devicePixelRatio));
+  };
+
+  return <div className={`relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`}>
+    <div ref={host} className="map-view__canvas" aria-label="Mapa interactivo" />
+    {loading && <div className="map-state map-state--loading" role="status"><i /><span>Cargando mapa…</span></div>}
+    {routeUnavailable && !loading && <div className="map-state map-state--route" role="status">No pudimos trazar la ruta. Puedes ajustar los puntos o continuar con la estimación.</div>}
+    {mapError && <div className="map-state map-state--error" role="alert"><b>No pudimos cargar el mapa.</b><span>Comprueba tu conexión e inténtalo nuevamente.</span><button type="button" onClick={retryMap}>Reintentar</button></div>}
+  </div>;
 }

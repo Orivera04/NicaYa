@@ -61,7 +61,7 @@ Access token JWT, refresh token rotativo y almacenado como hash, contraseñas co
 
 ### Despliegue en Render
 
-La API se publica en Render junto con PostgreSQL; la web se publica como un segundo servicio. Configura `DATABASE_URL`, secretos JWT únicos, `CORS_ORIGIN` con la URL exacta de la web y las variables `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_SOCKET_URL` en la web. Ejecuta migraciones con `prisma migrate deploy` antes de servir tráfico. Nunca reutilices credenciales o secretos compartidos por chat: rótalos inmediatamente desde Render.
+La API se publica en Render junto con PostgreSQL; la web se publica como un segundo servicio. Configura `DATABASE_URL`, secretos JWT únicos, `CORS_ORIGIN` con la URL exacta de la web y las variables `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_SOCKET_URL` en la web. `NEXT_PUBLIC_MAP_TILE_URL` es opcional: por defecto la web usa Carto Positron (`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png`) con atribución visible de OpenStreetMap y CARTO. Ejecuta migraciones con `prisma migrate deploy` antes de servir tráfico. Nunca reutilices credenciales o secretos compartidos por chat: rótalos inmediatamente desde Render.
 
 ### Fase 1 comercial
 
