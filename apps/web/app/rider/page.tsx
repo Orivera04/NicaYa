@@ -76,7 +76,7 @@ export default function RiderPage() {
   const refreshLocation = useCallback(() => {
     if (!navigator.geolocation) return setMessage("Activa GPS para recibir solicitudes cercanas.");
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
-      const next = { lat: coords.latitude, lng: coords.longitude }; setPosition(next); if (!centeredFromGps.current) { setFocus(next); centeredFromGps.current = true; }
+      const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : position.heading }; setPosition(next); if (!centeredFromGps.current) { setFocus(next); centeredFromGps.current = true; }
       if (profile?.available || activeTrip) try { await publishLocation(next); } catch { /* Retried on the next scheduled update. */ }
     }, () => setMessage("No pudimos actualizar tu GPS. Revisa los permisos."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
   }, [activeTrip, profile?.available, publishLocation]);
