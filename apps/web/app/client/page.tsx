@@ -101,8 +101,11 @@ export default function ClientPage() {
     const socketUrl = (process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api").replace(/\/api$/, "");
     const socket = io(socketUrl, { auth: { token: session.accessToken }, transports: ["websocket", "polling"] });
     const updateLocation = (location: LiveLocation) => { if (location.tripId === tripId) { setLiveRider(location); setTripTrail((current) => { const last = current.at(-1); return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001 ? current : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-120); }); } };
+    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); setTripTrail((current) => { const serverTrail = (trip.locations || []).map((point) => ({ lat: point.lat, lng: point.lng, heading: point.heading ?? undefined, accuracy: point.accuracy ?? undefined })); return serverTrail.length >= current.length ? serverTrail : current; }); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
     socket.on("trip:location-updated", updateLocation);
-    return () => { socket.disconnect(); };
+    socket.on("trip:accepted", updateTripState);
+    socket.on("trip:status-updated", updateTripState);
+    return () => { socket.off("trip:location-updated", updateLocation); socket.off("trip:accepted", updateTripState); socket.off("trip:status-updated", updateTripState); socket.disconnect(); };
   }, [tripId]);
 
   const getQuote = async () => {
