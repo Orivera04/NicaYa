@@ -58,6 +58,7 @@ export default function RiderPage() {
   const [showCancel, setShowCancel] = useState(false);
   const centeredFromGps = useRef(false);
   const lastLiveLocation = useRef<{ at: number; lat: number; lng: number } | null>(null);
+  const tripTransitionInFlight = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -123,10 +124,29 @@ export default function RiderPage() {
   };
   const moveTrip = async (requestedStatus?: unknown) => {
     const nextStatus = typeof requestedStatus === "string" ? requestedStatus : activeTrip && stages[activeTrip.status].next;
-    if (!activeTrip || !nextStatus) return; setBusy(true);
-    try { await api(`/trips/${activeTrip.id}/status`, { method: "PATCH", body: JSON.stringify({ status: nextStatus }) }); await load(); }
+    if (!activeTrip || !nextStatus || tripTransitionInFlight.current) return;
+
+    tripTransitionInFlight.current = true;
+    setBusy(true);
+
+    try {
+      const updated = await api<ActiveTrip>(`/trips/${activeTrip.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus }),
+      });
+
+      setActiveTrip((current) => current && current.id === updated.id
+        ? { ...current, ...updated, locations: current.locations }
+        : updated);
+      setTripInfoExpanded(true);
+      if (updated.status === "IN_PROGRESS") setMessage("Pasajero a bordo. Ya vas rumbo al destino.");
+      await load();
+    }
     catch (error) { setMessage((error as Error).message); }
-    finally { setBusy(false); }
+    finally {
+      tripTransitionInFlight.current = false;
+      setBusy(false);
+    }
   };
   const cancelActiveTrip = async () => {
     if (!activeTrip) return; setBusy(true);

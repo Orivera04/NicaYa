@@ -110,7 +110,26 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const tripKey = current.origin && current.destination ? `${current.origin.lat.toFixed(5)},${current.origin.lng.toFixed(5)}:${current.destination.lat.toFixed(5)},${current.destination.lng.toFixed(5)}` : "";
     if (tripKey !== observedTripKey.current) { observedTripKey.current = tripKey; observedTrail.current = []; }
     if (current.rider && current.routeFrom && current.routeTo) { const previous = observedTrail.current.at(-1); if (!previous || distanceMeters(previous, current.rider) >= 4) observedTrail.current = [...observedTrail.current, current.rider].slice(-120); }
-    const renderedTrail = current.traveledPath.length > 1 ? current.traveledPath : observedTrail.current;
+    const renderedTrail = (() => {
+      const persisted = current.traveledPath;
+      const observed = observedTrail.current;
+
+      if (!persisted.length) return observed;
+
+      const lastPersisted = persisted.at(-1);
+      const matchingObservedIndex = lastPersisted
+        ? observed.findLastIndex((point) => distanceMeters(lastPersisted, point) < 12)
+        : -1;
+      const unsavedTail = matchingObservedIndex >= 0
+        ? observed.slice(matchingObservedIndex + 1)
+        : observed.slice(-1);
+      const pending = unsavedTail.filter((point, index) => {
+        const previous = index === 0 ? lastPersisted : unsavedTail[index - 1];
+        return !previous || distanceMeters(previous, point) >= 4;
+      });
+
+      return [...persisted, ...pending].slice(-120);
+    })();
     const routeGoesToDestination = Boolean(current.routeTo && current.destination && current.routeTo.lat === current.destination.lat && current.routeTo.lng === current.destination.lng);
     const riderNearPickup = distanceMeters(current.rider, current.origin) <= 80;
     const riderWithPassenger = current.riderWithPassenger || routeGoesToDestination || Boolean(current.onDestinationClick) || (riderNearPickup && !current.onOriginClick);
