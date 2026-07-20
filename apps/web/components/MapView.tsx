@@ -255,9 +255,12 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-secondary-route-glow", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#fb923c", "line-width": 12, "line-opacity": .16, "line-blur": 4 } });
       instance.addLayer({ id: "motoya-secondary-route-line", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#fdba74", "line-width": 3.5, "line-opacity": .9, "line-dasharray": [1.25, 1.2] } });
     }
-    if (instance.getLayer("motoya-secondary-route-glow")) instance.setPaintProperty("motoya-secondary-route-glow", "line-color", secondaryWasCompleted ? "#10b981" : "#fb923c");
+    if (instance.getLayer("motoya-secondary-route-glow")) instance.setPaintProperty("motoya-secondary-route-glow", "line-color", secondaryWasCompleted ? "#2563eb" : "#fb923c");
     if (instance.getLayer("motoya-secondary-route-line")) {
-      instance.setPaintProperty("motoya-secondary-route-line", "line-color", secondaryWasCompleted ? "#22c55e" : "#fdba74");
+      // El tramo Salida → Recogida ya es recorrido histórico cuando el pasajero
+      // está a bordo; usa el mismo azul del progreso para que no parezca una
+      // segunda ruta activa.
+      instance.setPaintProperty("motoya-secondary-route-line", "line-color", secondaryWasCompleted ? "#38bdf8" : "#fdba74");
       instance.setPaintProperty("motoya-secondary-route-line", "line-dasharray", secondaryWasCompleted ? [1, 0.01] : [1.25, 1.2]);
     }
     const progressKey = `${mainRouteKey}:${routeGoesToDestination ? "destination" : routeGoesToPickup ? "pickup" : "idle"}`;
@@ -341,7 +344,6 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       const center = rider || origin || { lat: 12.1364, lng: -86.2514 };
       const mapStyle = createMapStyle("positron", window.devicePixelRatio);
       const instance = new lib.Map({ container: host.current, style: mapStyle, center: [center.lng, center.lat], zoom: 13, dragRotate: true, pitchWithRotate: false, touchZoomRotate: true });
-      instance.addControl(new lib.NavigationControl({ showCompass: true, showZoom: true, visualizePitch: false }), "bottom-right");
       instance.on("click", (event) => props.current.onPick?.({ lat: event.lngLat.lat, lng: event.lngLat.lng, label: "Ubicación seleccionada" }));
       const updateFocusVisibility = () => {
         const point = props.current.rider || props.current.focus || props.current.origin;
@@ -386,12 +388,22 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     map.current.flyTo({ center: [point.lng, point.lat], zoom: 15, essential: true });
     setFocusLost(false);
   };
+  const changeZoom = (amount: number) => {
+    if (!map.current) return;
+    map.current.easeTo({ zoom: Math.max(2, Math.min(20, map.current.getZoom() + amount)), duration: 180 });
+  };
+  const resetMapBearing = () => map.current?.easeTo({ bearing: 0, pitch: 0, duration: 220 });
 
   return <div data-theme={theme} className={`map-view relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`}>
     <div ref={host} className="map-view__canvas" aria-label="Mapa interactivo" />
     <div className="map-action-controls" aria-label="Controles de mapa">
       <button type="button" className="map-theme-toggle" data-theme={theme} onClick={switchTheme} aria-label="Cambiar tema del mapa" title={theme === "positron" ? "Mapa con más color" : theme === "voyager" ? "Mapa oscuro" : "Mapa claro"}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Zm-8 9 8 4.5 8-4.5M4 16.5 12 21l8-4.5" /></svg></button>
       {(focusLost || showFocusControl) && <button type="button" className="map-focus-control" onClick={focusMap} aria-label="Centrar el foco del mapa" title="Centrar mapa"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg></button>}
+    </div>
+    <div className="map-navigation-controls" aria-label="Navegación del mapa">
+      <button type="button" onClick={() => changeZoom(1)} aria-label="Acercar mapa" title="Acercar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
+      <button type="button" onClick={() => changeZoom(-1)} aria-label="Alejar mapa" title="Alejar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg></button>
+      <button type="button" className="map-bearing-control" onClick={resetMapBearing} aria-label="Restablecer orientación del mapa" title="Restablecer orientación"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 4.5 12-4.5 6-4.5-6L12 3Z" /><path d="m12 3 4.5 12L12 15V3Z" /></svg></button>
     </div>
     {loading && <div className="map-state map-state--loading" role="status"><i /><span>Cargando mapa…</span></div>}
     {routeUnavailable && !loading && <div className="map-state map-state--route" role="status">No pudimos trazar la ruta. Puedes ajustar los puntos o continuar con la estimación.</div>}

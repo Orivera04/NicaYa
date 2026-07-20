@@ -19,7 +19,7 @@ const stages: Record<ActiveTrip["status"], { title: string; detail: string; acti
   ACCEPTED: { title: "Ve a recoger al pasajero", detail: "Inicia la ruta hacia el marcador morado de recogida.", action: "Iniciar ruta al pasajero", next: "RIDER_ON_THE_WAY" },
   RIDER_ON_THE_WAY: { title: "Vas a recoger al pasajero", detail: "Al llegar, toca el marcador morado del pasajero en el mapa.", action: "Ya llegué al pasajero", next: "RIDER_ARRIVED" },
   RIDER_ARRIVED: { title: "Pasajero a bordo", detail: "Toca el marcador naranja de destino para iniciar el recorrido.", action: "Iniciar viaje al destino", next: "IN_PROGRESS" },
-  IN_PROGRESS: { title: "Llevas al pasajero a su destino", detail: "Sigue la ruta naranja. El pasajero confirmará la llegada desde su aplicación." },
+  IN_PROGRESS: { title: "Llevas al pasajero a su destino", detail: "Sigue la ruta indicada. El pasajero confirmará la llegada desde su aplicación." },
 };
 
 const money = (trip: Pick<RequestTrip, "currency" | "estimatedPrice" | "proposedPrice">) => `${trip.currency} ${trip.proposedPrice || trip.estimatedPrice}`;
