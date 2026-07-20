@@ -26,6 +26,34 @@ const statusCopy: Record<string, string> = {
   IN_PROGRESS: "Viaje en curso. Confirma la llegada solo al llegar al destino.",
 };
 
+const toTripTrail = (trip: ActiveTrip): MapPoint[] => (trip.locations || []).map((point) => ({
+  lat: point.lat,
+  lng: point.lng,
+  heading: point.heading ?? undefined,
+  accuracy: point.accuracy ?? undefined,
+}));
+
+const latestTripLocation = (trip: ActiveTrip): LiveLocation | null => {
+  if (trip.riderLat != null && trip.riderLng != null) {
+    return {
+      tripId: trip.id,
+      lat: trip.riderLat,
+      lng: trip.riderLng,
+      recordedAt: trip.riderLocationUpdatedAt || new Date().toISOString(),
+    };
+  }
+
+  const lastLocation = trip.locations?.at(-1);
+  return lastLocation ? {
+    tripId: trip.id,
+    lat: lastLocation.lat,
+    lng: lastLocation.lng,
+    accuracy: lastLocation.accuracy,
+    heading: lastLocation.heading,
+    recordedAt: lastLocation.createdAt,
+  } : null;
+};
+
 export default function ClientPage() {
   const [origin, setOrigin] = useState<Place>(initialPlace);
   const [destination, setDestination] = useState<Place | null>(null);
@@ -75,7 +103,14 @@ export default function ClientPage() {
       const [places, trips] = await Promise.all([api<SavedPlace[]>("/places"), api<ActiveTrip[]>("/trips")]);
       setFavorites(places);
       const current = trips.find((trip) => ["REQUESTED", "ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status));
-      if (current) { setTripId(current.id); setActiveTrip(current); setTripTrail((current.locations || []).map((point) => ({ lat: point.lat, lng: point.lng, heading: point.heading ?? undefined, accuracy: point.accuracy ?? undefined }))); if (current.riderLat != null && current.riderLng != null) setLiveRider({ tripId: current.id, lat: current.riderLat, lng: current.riderLng, recordedAt: current.riderLocationUpdatedAt || new Date().toISOString() }); setTripInfoExpanded(true); setStage(current.status === "REQUESTED" ? "SEARCHING" : "TRACKING"); }
+      if (current) {
+        setTripId(current.id);
+        setActiveTrip(current);
+        setTripTrail(toTripTrail(current));
+        setLiveRider(latestTripLocation(current));
+        setTripInfoExpanded(true);
+        setStage(current.status === "REQUESTED" ? "SEARCHING" : "TRACKING");
+      }
     } catch (error) { setMessage((error as Error).message); }
   };
   useEffect(() => { void load(); locate(); }, []);
@@ -84,8 +119,12 @@ export default function ClientPage() {
     const refresh = async () => {
       try {
         const trip = await api<ActiveTrip>(`/trips/${tripId}`);
-        setActiveTrip(trip); setTripTrail((current) => { const fromServer = (trip.locations || []).map((point) => ({ lat: point.lat, lng: point.lng, heading: point.heading ?? undefined, accuracy: point.accuracy ?? undefined })); return fromServer.length >= current.length ? fromServer : current; });
-        if (trip.riderLat != null && trip.riderLng != null) setLiveRider({ tripId: trip.id, lat: trip.riderLat, lng: trip.riderLng, recordedAt: trip.riderLocationUpdatedAt || new Date().toISOString() });
+        setActiveTrip(trip);
+        setTripTrail((current) => {
+          const fromServer = toTripTrail(trip);
+          return fromServer.length >= current.length ? fromServer : current;
+        });
+        setLiveRider(latestTripLocation(trip));
         if (trip.status === "REQUESTED") {
           setStage("SEARCHING");
           setOffers(await api<Offer[]>(`/trips/${tripId}/offers`));
@@ -101,7 +140,7 @@ export default function ClientPage() {
     const socketUrl = (process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api").replace(/\/api$/, "");
     const socket = io(socketUrl, { auth: { token: session.accessToken }, transports: ["websocket", "polling"] });
     const updateLocation = (location: LiveLocation) => { if (location.tripId === tripId) { setLiveRider(location); setTripTrail((current) => { const last = current.at(-1); return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001 ? current : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-120); }); } };
-    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); setTripTrail((current) => { const serverTrail = (trip.locations || []).map((point) => ({ lat: point.lat, lng: point.lng, heading: point.heading ?? undefined, accuracy: point.accuracy ?? undefined })); return serverTrail.length >= current.length ? serverTrail : current; }); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
+    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); setTripTrail((current) => { const serverTrail = toTripTrail(trip); return serverTrail.length >= current.length ? serverTrail : current; }); setLiveRider(latestTripLocation(trip)); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
     socket.on("trip:location-updated", updateLocation);
     socket.on("trip:accepted", updateTripState);
     socket.on("trip:status-updated", updateTripState);
@@ -169,7 +208,16 @@ export default function ClientPage() {
     finally { setBusy(false); }
   };
   const price = quote ? (proposedPrice || quote.estimatedPrice) : null;
-  const riderOnMap = liveRider ? { lat: liveRider.lat, lng: liveRider.lng, heading: liveRider.heading ?? undefined } : activeTrip?.riderLat != null && activeTrip.riderLng != null ? { lat: activeTrip.riderLat, lng: activeTrip.riderLng } : activeTrip?.rider?.riderProfile?.workZoneLat != null && activeTrip.rider.riderProfile.workZoneLng != null ? { lat: activeTrip.rider.riderProfile.workZoneLat, lng: activeTrip.rider.riderProfile.workZoneLng } : undefined;
+  const lastPersistedRiderLocation = tripTrail.at(-1);
+  const riderOnMap = liveRider
+    ? { lat: liveRider.lat, lng: liveRider.lng, heading: liveRider.heading ?? undefined }
+    : lastPersistedRiderLocation
+      ? lastPersistedRiderLocation
+      : activeTrip?.riderLat != null && activeTrip.riderLng != null
+        ? { lat: activeTrip.riderLat, lng: activeTrip.riderLng }
+        : activeTrip?.rider?.riderProfile?.workZoneLat != null && activeTrip.rider.riderProfile.workZoneLng != null
+          ? { lat: activeTrip.rider.riderProfile.workZoneLat, lng: activeTrip.rider.riderProfile.workZoneLng }
+          : undefined;
 
   return <Guard roles={["CLIENT"]}><MobileAppShell role="CLIENT"><div className="trip-flow pb-4">
     {stage === "ROUTE" && <><section className="trip-flow-hero"><p>MOTOYA · PASAJERO</p><h1>¿A dónde te llevamos?</h1><span>Elige tu destino, revisa la tarifa y solicita una moto.</span></section>

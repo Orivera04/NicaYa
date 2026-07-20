@@ -166,7 +166,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     }
     const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false) => {
       if (!point) return;
-      const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}${emphasized ? " motoya-target-marker" : ""}`; element.style.zIndex = emphasized ? "7" : kind === "rider" || kind === "riderWithPassenger" ? "5" : "3"; element.setAttribute("aria-label", tooltip); element.innerHTML = markerSvg(kind, point.heading, current.riderConnected);
+      const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}${emphasized ? " motoya-target-marker" : ""}${kind === "request" ? " motoya-request-marker" : ""}`; element.style.zIndex = emphasized || kind === "request" ? "7" : kind === "rider" || kind === "riderWithPassenger" ? "5" : "3"; element.setAttribute("aria-label", tooltip); element.innerHTML = markerSvg(kind, point.heading, current.riderConnected);
       if (clicked) element.addEventListener("click", clicked);
       const marker = new lib.Marker({ element, draggable, anchor: "center" }).setLngLat([point.lng, point.lat]).addTo(instance);
       if (moved) marker.on("dragend", () => { const next = marker.getLngLat(); moved({ lat: next.lat, lng: next.lng }); });
