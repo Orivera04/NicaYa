@@ -62,6 +62,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const markers = useRef<Array<{ remove: () => void }>>([]);
   const observedTrail = useRef<MapPoint[]>([]);
   const observedTripKey = useRef("");
+  const routeProgress = useRef({ key: "", index: 0 });
   const fittedRoute = useRef("");
   const lastFocus = useRef("");
   const [route, setRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
@@ -156,8 +157,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
     const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
-    // La ruta recorrida se construye exclusivamente con puntos que el API confirmó.
-    // El marcador, en cambio, usa el último GPS/Socket para que se mueva en tiempo real.
+    // El marcador usa el GPS más reciente. Para la línea visible proyectamos ese
+    // avance sobre la misma geometría de la ruta, evitando que el GPS crudo cree
+    // trazos paralelos, saltos o una ruta diferente para cliente y rider.
     const liveRider = current.rider || renderedTrail.at(-1);
     const riderNearPickup = distanceMeters(liveRider, current.origin) <= 80;
     const riderWithPassenger = current.riderWithPassenger || routeGoesToDestination || Boolean(current.onDestinationClick) || (riderNearPickup && !current.onOriginClick);
@@ -180,15 +182,32 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-secondary-route-glow", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#fb923c", "line-width": 12, "line-opacity": .16, "line-blur": 4 } });
       instance.addLayer({ id: "motoya-secondary-route-line", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#fdba74", "line-width": 3.5, "line-opacity": .9, "line-dasharray": [1.25, 1.2] } });
     }
-    const traveledData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedTrail.map((point) => [point.lng, point.lat]) } };
+    const progressKey = `${mainRouteKey}:${routeGoesToDestination ? "destination" : routeGoesToPickup ? "pickup" : "idle"}`;
+    if (routeProgress.current.key !== progressKey) routeProgress.current = { key: progressKey, index: 0 };
+    let progressedRoute: MapPoint[] = [];
+    if (renderedRoute.length > 1 && liveRider) {
+      let nearestIndex = 0;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      renderedRoute.forEach((point, index) => {
+        const distance = distanceMeters(point, liveRider);
+        if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
+      });
+      // Un GPS urbano puede desviarse algunos metros de la calle. Dentro de un
+      // kilómetro preferimos mantener una ruta continua a dibujar un segmento
+      // recto falso entre el mapa y la posición del rider.
+      if (nearestDistance <= 1000) routeProgress.current.index = Math.max(routeProgress.current.index, nearestIndex);
+      if (routeProgress.current.index > 0) progressedRoute = renderedRoute.slice(0, routeProgress.current.index + 1);
+    }
+    const completedRoute = progressedRoute.length > 1 ? progressedRoute : renderedRoute.length < 2 ? renderedTrail : [];
+    const traveledData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: completedRoute.map((point) => [point.lng, point.lat]) } };
     const traveledSource = instance.getSource("motoya-traveled-route") as GeoJSONSource | undefined;
     if (traveledSource) traveledSource.setData(traveledData);
     else {
       instance.addSource("motoya-traveled-route", { type: "geojson", data: traveledData });
-      instance.addLayer({ id: "motoya-traveled-route-shadow", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#047857", "line-width": 14, "line-opacity": .28, "line-blur": 4 } });
-      instance.addLayer({ id: "motoya-traveled-route-casing", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#047857", "line-width": 9, "line-opacity": .9 } });
-      instance.addLayer({ id: "motoya-traveled-route-line", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#4ade80", "line-width": 5, "line-opacity": 1 } });
-      instance.addLayer({ id: "motoya-traveled-route-highlight", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#dcfce7", "line-width": 1.5, "line-opacity": .82 } });
+      instance.addLayer({ id: "motoya-traveled-route-shadow", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#2563eb", "line-width": 16, "line-opacity": .26, "line-blur": 5 } });
+      instance.addLayer({ id: "motoya-traveled-route-casing", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#1d4ed8", "line-width": 10, "line-opacity": .95 } });
+      instance.addLayer({ id: "motoya-traveled-route-line", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#38bdf8", "line-width": 5, "line-opacity": 1 } });
+      instance.addLayer({ id: "motoya-traveled-route-highlight", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#eff6ff", "line-width": 1.4, "line-opacity": .86 } });
     }
     const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false) => {
       if (!point) return;
