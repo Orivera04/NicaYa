@@ -161,8 +161,12 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // avance sobre la misma geometría de la ruta, evitando que el GPS crudo cree
     // trazos paralelos, saltos o una ruta diferente para cliente y rider.
     const liveRider = current.rider || renderedTrail.at(-1);
-    const riderNearPickup = distanceMeters(liveRider, current.origin) <= 80;
-    const riderWithPassenger = current.riderWithPassenger || routeGoesToDestination || Boolean(current.onDestinationClick) || (riderNearPickup && !current.onOriginClick);
+    // El pasajero solo puede pasar a bordo por una transición confirmada por el
+    // servidor (IN_PROGRESS). Nunca deducimos este estado por cercanía al
+    // punto de recogida, por la ruta calculada ni por controles visibles: eso
+    // hacía que la vista del cliente mostrara una recogida que el rider aún no
+    // había confirmado.
+    const riderWithPassenger = Boolean(current.riderWithPassenger);
     const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedRoute.map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
     if (source) source.setData(routeData);

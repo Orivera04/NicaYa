@@ -71,6 +71,7 @@ export default function RiderPage() {
   const [showCancel, setShowCancel] = useState(false);
   const centeredFromGps = useRef(false);
   const lastLiveLocation = useRef<{ at: number; lat: number; lng: number } | null>(null);
+  const locationPublishInFlight = useRef(false);
   const tripTransitionInFlight = useRef(false);
 
   const load = useCallback(async () => {
@@ -103,8 +104,18 @@ export default function RiderPage() {
   }, []);
   const publishLocation = useCallback(async (next: MapPoint & { accuracy?: number; heading?: number }) => {
     if (activeTrip) {
-      const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(next) });
-      setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
+      // El GPS puede emitir varios puntos mientras la red sigue procesando el
+      // anterior. Serializamos el envío para conservar el orden cronológico
+      // del trayecto que verá el pasajero y evitar saltos por respuestas fuera
+      // de orden.
+      if (locationPublishInFlight.current) return;
+      locationPublishInFlight.current = true;
+      try {
+        const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(next) });
+        setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
+      } finally {
+        locationPublishInFlight.current = false;
+      }
     }
     else if (profile?.available) await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(next) });
   }, [activeTrip?.id, profile?.available]);
@@ -124,7 +135,7 @@ export default function RiderPage() {
       const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : undefined };
       setPosition(next);
       const previous = lastLiveLocation.current; const moved = !previous || Math.hypot(next.lat - previous.lat, next.lng - previous.lng) > .00008;
-      if (moved || !previous || Date.now() - previous.at >= 5000) { lastLiveLocation.current = { at: Date.now(), lat: next.lat, lng: next.lng }; void publishLocation(next).catch(() => setMessage("No pudimos compartir tu ubicación. Reintentaremos automáticamente.")); }
+      if (moved || !previous || Date.now() - previous.at >= 4000) { lastLiveLocation.current = { at: Date.now(), lat: next.lat, lng: next.lng }; void publishLocation(next).catch(() => setMessage("No pudimos compartir tu ubicación. Reintentaremos automáticamente.")); }
     }, () => setMessage("No pudimos actualizar tu GPS durante el viaje."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
     return () => navigator.geolocation.clearWatch(watchId);
   }, [activeTrip?.id, publishLocation]);

@@ -62,6 +62,27 @@ const keepNewestLocation = (current: LiveLocation | null, incoming: LiveLocation
   return Number.isNaN(currentTime) || Number.isNaN(incomingTime) || incomingTime >= currentTime ? incoming : current;
 };
 
+// Los eventos Socket y el sondeo HTTP pueden llegar en distinto orden. Este
+// merge conserva la última posición confirmada para que un GET iniciado antes
+// de un evento de GPS no haga que la moto retroceda visualmente.
+const mergeTripLocation = (current: ActiveTrip | null, incoming: ActiveTrip): ActiveTrip => {
+  if (!current || current.id !== incoming.id) return incoming;
+  const currentLocation = latestTripLocation(current);
+  const incomingLocation = latestTripLocation(incoming);
+  const latest = keepNewestLocation(currentLocation, incomingLocation);
+  if (latest === incomingLocation) return incoming;
+
+  const incomingLocations = incoming.locations || [];
+  const currentLocations = current.locations || [];
+  return {
+    ...incoming,
+    riderLat: current.riderLat,
+    riderLng: current.riderLng,
+    riderLocationUpdatedAt: current.riderLocationUpdatedAt,
+    locations: currentLocations.length > incomingLocations.length ? currentLocations : incomingLocations,
+  };
+};
+
 export default function ClientPage() {
   const [origin, setOrigin] = useState<Place>(initialPlace);
   const [destination, setDestination] = useState<Place | null>(null);
@@ -113,7 +134,7 @@ export default function ClientPage() {
       const current = trips.find((trip) => ["REQUESTED", "ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status));
       if (current) {
         setTripId(current.id);
-        setActiveTrip(current);
+        setActiveTrip((previous) => mergeTripLocation(previous, current));
         setTripTrail(toTripTrail(current));
         setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(current)));
         setTripInfoExpanded(true);
@@ -127,7 +148,7 @@ export default function ClientPage() {
     const refresh = async () => {
       try {
         const trip = await api<ActiveTrip>(`/trips/${tripId}`);
-        setActiveTrip(trip);
+        setActiveTrip((previous) => mergeTripLocation(previous, trip));
         setTripTrail((current) => {
           const fromServer = toTripTrail(trip);
           return fromServer.length >= current.length ? fromServer : current;
@@ -140,15 +161,41 @@ export default function ClientPage() {
         else if (trip.status.startsWith("CANCELLED") || trip.status === "COMPLETED") reset();
       } catch { /* A short networking error should not erase an active trip from the screen. */ }
     };
-    void refresh(); const timer = window.setInterval(() => void refresh(), 5000); return () => clearInterval(timer);
+    // Socket.io actualiza la moto inmediatamente. Este sondeo corto es el
+    // respaldo ante una red móvil que haya perdido momentáneamente el socket.
+    void refresh(); const timer = window.setInterval(() => void refresh(), 3000); return () => clearInterval(timer);
   }, [tripId]);
   useEffect(() => {
     if (!tripId) return;
     const session = getSession(); if (!session) return;
     const socketUrl = (process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api").replace(/\/api$/, "");
     const socket = io(socketUrl, { auth: { token: session.accessToken }, transports: ["websocket", "polling"] });
-    const updateLocation = (location: LiveLocation) => { if (location.tripId === tripId) { setLiveRider((previous) => keepNewestLocation(previous, location)); setTripTrail((current) => { const last = current.at(-1); return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001 ? current : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-120); }); } };
-    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); setTripTrail((current) => { const serverTrail = toTripTrail(trip); return serverTrail.length >= current.length ? serverTrail : current; }); setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip))); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
+    const updateLocation = (location: LiveLocation) => {
+      if (location.tripId !== tripId) return;
+      setLiveRider((previous) => keepNewestLocation(previous, location));
+      setActiveTrip((current) => {
+        if (!current || current.id !== location.tripId) return current;
+        const latest = keepNewestLocation(latestTripLocation(current), location);
+        if (latest !== location) return current;
+        const locations = current.locations || [];
+        const last = locations.at(-1);
+        const duplicate = last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001;
+        return {
+          ...current,
+          riderLat: location.lat,
+          riderLng: location.lng,
+          riderLocationUpdatedAt: location.recordedAt,
+          locations: duplicate ? locations : [...locations, { lat: location.lat, lng: location.lng, accuracy: location.accuracy, heading: location.heading, createdAt: location.recordedAt }].slice(-120),
+        };
+      });
+      setTripTrail((current) => {
+        const last = current.at(-1);
+        return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001
+          ? current
+          : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-120);
+      });
+    };
+    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip((previous) => mergeTripLocation(previous, trip)); setTripTrail((current) => { const serverTrail = toTripTrail(trip); return serverTrail.length >= current.length ? serverTrail : current; }); setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip))); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
     const handleCancelled = (trip: { id: string }) => { if (trip.id !== tripId) return; setShowCancel(false); setTripId(null); setActiveTrip(null); setLiveRider(null); setTripTrail([]); setTripInfoExpanded(true); setOffers([]); setDestination(null); setQuote(null); setProposedPrice(""); setStage("ROUTE"); setEditing("destination"); setMessage("El viaje fue cancelado."); };
     socket.on("trip:location-updated", updateLocation);
     socket.on("trip:accepted", updateTripState);
