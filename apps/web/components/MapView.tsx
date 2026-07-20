@@ -116,8 +116,10 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
     const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
-    const confirmedRider = renderedTrail.at(-1) || current.rider;
-    const riderNearPickup = distanceMeters(confirmedRider, current.origin) <= 80;
+    // La ruta recorrida se construye exclusivamente con puntos que el API confirmó.
+    // El marcador, en cambio, usa el último GPS/Socket para que se mueva en tiempo real.
+    const liveRider = current.rider || renderedTrail.at(-1);
+    const riderNearPickup = distanceMeters(liveRider, current.origin) <= 80;
     const riderWithPassenger = current.riderWithPassenger || routeGoesToDestination || Boolean(current.onDestinationClick) || (riderNearPickup && !current.onOriginClick);
     const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedRoute.map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
@@ -160,7 +162,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     addMarker(current.startFlag || renderedTrail[0], "start", false, "Salida del rider");
     if (current.pickupFlag || riderWithPassenger) addMarker(current.pickupFlag || current.origin, "pickup", false, "Pasajero recogido");
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), current.onDestinationClick ? "Iniciar viaje hacia el destino" : "Destino", current.onDestinationMove, current.onDestinationClick, routeGoesToDestination);
-    addMarker(confirmedRider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
+    addMarker(liveRider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
     const visibleRoute = [...renderedRoute, ...renderedSecondaryRoute, ...renderedTrail];
     const key = `${plannedTo?.lat.toFixed(5) || ""},${plannedTo?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
