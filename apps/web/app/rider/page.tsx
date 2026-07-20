@@ -11,7 +11,7 @@ type Profile = { available: boolean };
 type RequestTrip = { id: string; originAddress: string; originLat: number; originLng: number; destinationAddress: string; destinationLat: number; destinationLng: number; estimatedPrice: string; proposedPrice?: string | null; currency: string; distanceKm: number; estimatedDurationMin: number; riderDistanceKm?: number };
 type TripLocation = { lat: number; lng: number; accuracy?: number | null; heading?: number | null; createdAt: string };
 type RecordedTripLocation = { tripId: string; lat: number; lng: number; accuracy?: number | null; heading?: number | null; recordedAt: string };
-type ActiveTrip = RequestTrip & { status: "ACCEPTED" | "RIDER_ON_THE_WAY" | "RIDER_ARRIVED" | "IN_PROGRESS"; client?: { name: string }; riderLat?: number | null; riderLng?: number | null; riderAccuracy?: number | null; riderHeading?: number | null; locations?: TripLocation[] };
+type ActiveTrip = RequestTrip & { status: "ACCEPTED" | "RIDER_ON_THE_WAY" | "RIDER_ARRIVED" | "IN_PROGRESS"; client?: { name: string }; riderLat?: number | null; riderLng?: number | null; riderAccuracy?: number | null; riderHeading?: number | null; riderLocationUpdatedAt?: string | null; locations?: TripLocation[] };
 type Readiness = { ready: boolean; blockers: Array<{ code: string; message: string; action: string }>; workZone: { department: string } | null; subscription: { plan?: string; daysRemaining: number } | null; dailyQuota: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
 
 const defaultPosition = { lat: 12.1364, lng: -86.2514 };
@@ -78,11 +78,21 @@ export default function RiderPage() {
       const [nextProfile, nextReadiness, trips] = await Promise.all([api<Profile>("/riders/me"), api<Readiness>("/riders/me/readiness"), api<ActiveTrip[]>("/trips")]);
       setProfile(nextProfile); setReadiness(nextReadiness);
       const current = trips.find((trip) => ["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status));
-      setActiveTrip(current || null);
+      setActiveTrip((previous) => {
+        if (!current || previous?.id !== current.id) return current || null;
+        const previousLocations = previous.locations || [];
+        const incomingLocations = current.locations || [];
+        // Una respuesta de sondeo iniciada antes de un PATCH de GPS no debe borrar
+        // la cola local confirmada ni devolver visualmente la moto hacia atrás.
+        return incomingLocations.length >= previousLocations.length ? current : { ...current, locations: previousLocations, riderLat: previous.riderLat, riderLng: previous.riderLng, riderAccuracy: previous.riderAccuracy, riderHeading: previous.riderHeading, riderLocationUpdatedAt: previous.riderLocationUpdatedAt };
+      });
       const latestLocation = current?.riderLat != null && current.riderLng != null
         ? { lat: current.riderLat, lng: current.riderLng, accuracy: current.riderAccuracy ?? undefined, heading: current.riderHeading ?? undefined }
         : current?.locations?.at(-1);
-      if (latestLocation) {
+      const serverLocationAt = current?.riderLocationUpdatedAt || current?.locations?.at(-1)?.createdAt;
+      const serverTimestamp = serverLocationAt ? Date.parse(serverLocationAt) : 0;
+      const localTimestamp = lastLiveLocation.current?.at || 0;
+      if (latestLocation && (Number.isNaN(serverTimestamp) || serverTimestamp >= localTimestamp)) {
         const restoredPosition = { lat: latestLocation.lat, lng: latestLocation.lng, accuracy: latestLocation.accuracy ?? undefined, heading: latestLocation.heading ?? undefined };
         setPosition(restoredPosition);
         if (!centeredFromGps.current) setFocus(restoredPosition);

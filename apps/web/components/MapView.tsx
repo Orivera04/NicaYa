@@ -60,6 +60,8 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
   const markers = useRef<Array<{ remove: () => void }>>([]);
+  const observedTrail = useRef<MapPoint[]>([]);
+  const observedTripKey = useRef("");
   const fittedRoute = useRef("");
   const lastFocus = useRef("");
   const [route, setRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
@@ -111,7 +113,45 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     if (!instance || !lib || !instance.isStyleLoaded()) return;
     markers.current.forEach((marker) => marker.remove()); markers.current = [];
     const current = props.current;
-    const renderedTrail = current.traveledPath.filter((point, index, trail) => index === 0 || distanceMeters(trail[index - 1], point) >= 2).slice(-120);
+    const tripKey = current.origin && current.destination
+      ? `${current.origin.lat.toFixed(5)},${current.origin.lng.toFixed(5)}:${current.destination.lat.toFixed(5)},${current.destination.lng.toFixed(5)}`
+      : "";
+
+    if (tripKey !== observedTripKey.current) {
+      observedTripKey.current = tripKey;
+      observedTrail.current = [];
+    }
+
+    // La cola local recupera la respuesta fluida de la versión anterior: el rider
+    // se ve avanzar apenas llega un punto GPS/Socket, incluso antes del siguiente
+    // refresco del viaje. Sólo se utiliza como una cola corta sobre el historial
+    // persistido y se descarta al cambiar de viaje.
+    if (current.rider && current.routeFrom && current.routeTo) {
+      const previous = observedTrail.current.at(-1);
+      if (!previous || distanceMeters(previous, current.rider) >= 3) {
+        observedTrail.current = [...observedTrail.current, current.rider].slice(-120);
+      }
+    }
+
+    const persistedTrail = current.traveledPath
+      .filter((point, index, trail) => index === 0 || distanceMeters(trail[index - 1], point) >= 2)
+      .slice(-120);
+    const renderedTrail = (() => {
+      if (!persistedTrail.length) return observedTrail.current;
+      if (!observedTrail.current.length) return persistedTrail;
+
+      const lastPersisted = persistedTrail.at(-1)!;
+      const matchedObserved = observedTrail.current.findLastIndex((point) => distanceMeters(lastPersisted, point) < 12);
+      // Tras volver a entrar no añadimos una línea artificial desde un histórico
+      // viejo hasta el GPS actual. La cola se vuelve a poblar en el siguiente punto.
+      const tail = matchedObserved >= 0
+        ? observedTrail.current.slice(matchedObserved + 1)
+        : distanceMeters(lastPersisted, observedTrail.current[0]) < 120
+          ? observedTrail.current
+          : [];
+
+      return [...persistedTrail, ...tail].filter((point, index, trail) => index === 0 || distanceMeters(trail[index - 1], point) >= 3).slice(-120);
+    })();
     const plannedFrom = current.riderWithPassenger ? current.origin : current.traveledPath[0] || current.routeFrom || current.origin;
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);

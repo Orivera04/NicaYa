@@ -54,6 +54,14 @@ const latestTripLocation = (trip: ActiveTrip): LiveLocation | null => {
   } : null;
 };
 
+const keepNewestLocation = (current: LiveLocation | null, incoming: LiveLocation | null): LiveLocation | null => {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const currentTime = Date.parse(current.recordedAt);
+  const incomingTime = Date.parse(incoming.recordedAt);
+  return Number.isNaN(currentTime) || Number.isNaN(incomingTime) || incomingTime >= currentTime ? incoming : current;
+};
+
 export default function ClientPage() {
   const [origin, setOrigin] = useState<Place>(initialPlace);
   const [destination, setDestination] = useState<Place | null>(null);
@@ -107,7 +115,7 @@ export default function ClientPage() {
         setTripId(current.id);
         setActiveTrip(current);
         setTripTrail(toTripTrail(current));
-        setLiveRider(latestTripLocation(current));
+        setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(current)));
         setTripInfoExpanded(true);
         setStage(current.status === "REQUESTED" ? "SEARCHING" : "TRACKING");
       }
@@ -124,7 +132,7 @@ export default function ClientPage() {
           const fromServer = toTripTrail(trip);
           return fromServer.length >= current.length ? fromServer : current;
         });
-        setLiveRider(latestTripLocation(trip));
+        setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip)));
         if (trip.status === "REQUESTED") {
           setStage("SEARCHING");
           setOffers(await api<Offer[]>(`/trips/${tripId}/offers`));
@@ -139,8 +147,8 @@ export default function ClientPage() {
     const session = getSession(); if (!session) return;
     const socketUrl = (process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api").replace(/\/api$/, "");
     const socket = io(socketUrl, { auth: { token: session.accessToken }, transports: ["websocket", "polling"] });
-    const updateLocation = (location: LiveLocation) => { if (location.tripId === tripId) { setLiveRider(location); setTripTrail((current) => { const last = current.at(-1); return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001 ? current : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-120); }); } };
-    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); setTripTrail((current) => { const serverTrail = toTripTrail(trip); return serverTrail.length >= current.length ? serverTrail : current; }); setLiveRider(latestTripLocation(trip)); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
+    const updateLocation = (location: LiveLocation) => { if (location.tripId === tripId) { setLiveRider((previous) => keepNewestLocation(previous, location)); setTripTrail((current) => { const last = current.at(-1); return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001 ? current : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-120); }); } };
+    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip(trip); setTripTrail((current) => { const serverTrail = toTripTrail(trip); return serverTrail.length >= current.length ? serverTrail : current; }); setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip))); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
     socket.on("trip:location-updated", updateLocation);
     socket.on("trip:accepted", updateTripState);
     socket.on("trip:status-updated", updateTripState);
