@@ -1,5 +1,6 @@
 const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 export type Session = { accessToken: string; refreshToken: string; user: { id: string; name: string; email: string; role: "CLIENT" | "RIDER" | "ADMIN" } };
+export type ApiError = Error & { status?: number; code?: string };
 type TokenPair = Pick<Session, "accessToken" | "refreshToken">;
 let refreshInFlight: Promise<Session | null> | null = null;
 
@@ -37,6 +38,13 @@ export async function api<T>(path: string, options: RequestInit = {}) {
     if (session) response = await fetch(base + path, { ...options, headers: headersFor(session, options.headers) });
     else logout();
   }
-  if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.error?.message || "No fue posible completar la accion."); }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const error = new Error(body?.error?.message || "No fue posible completar la accion.") as ApiError;
+    error.name = "ApiError";
+    error.status = response.status;
+    error.code = body?.error?.code;
+    throw error;
+  }
   return response.status === 204 ? null as T : response.json() as Promise<T>;
 }

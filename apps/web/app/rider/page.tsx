@@ -5,7 +5,7 @@ import { io } from "socket.io-client";
 import { Guard } from "@/components/Guard";
 import { MapPoint, MapView } from "@/components/MapView";
 import { MobileAppShell } from "@/components/MobileAppShell";
-import { api, getSession } from "@/lib/api";
+import { api, getSession, type ApiError } from "@/lib/api";
 
 type Profile = { available: boolean };
 type RequestTrip = { id: string; originAddress: string; originLat: number; originLng: number; destinationAddress: string; destinationLat: number; destinationLng: number; estimatedPrice: string; proposedPrice?: string | null; currency: string; distanceKm: number; estimatedDurationMin: number; riderDistanceKm?: number };
@@ -15,12 +15,20 @@ type ActiveTrip = RequestTrip & { status: "ACCEPTED" | "RIDER_ON_THE_WAY" | "RID
 type Readiness = { ready: boolean; blockers: Array<{ code: string; message: string; action: string }>; workZone: { department: string } | null; subscription: { plan?: string; daysRemaining: number } | null; dailyQuota: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
 
 const defaultPosition = { lat: 12.1364, lng: -86.2514 };
+const LOCATION_PUBLISH_INTERVAL_MS = 3_000;
+const LOCATION_HEARTBEAT_MS = 10_000;
 const distanceToMeters = (left: MapPoint, right: { lat: number; lng: number }) => {
   const latitude = (left.lat + right.lat) / 2 * Math.PI / 180;
   const latitudeDistance = (right.lat - left.lat) * 111_320;
   const longitudeDistance = (right.lng - left.lng) * 111_320 * Math.cos(latitude);
   return Math.hypot(latitudeDistance, longitudeDistance);
 };
+const locationPayload = (point: MapPoint) => ({
+  lat: point.lat,
+  lng: point.lng,
+  ...(Number.isFinite(point.accuracy) && (point.accuracy ?? 0) >= 0 && (point.accuracy ?? 0) <= 5_000 ? { accuracy: point.accuracy } : {}),
+  ...(Number.isFinite(point.heading) && (point.heading ?? 0) >= 0 && (point.heading ?? 0) <= 360 ? { heading: point.heading } : {}),
+});
 const stages: Record<ActiveTrip["status"], { title: string; detail: string; action?: string; next?: string }> = {
   ACCEPTED: { title: "Ve a recoger al pasajero", detail: "Inicia la ruta hacia el marcador morado de recogida.", action: "Iniciar ruta al pasajero", next: "RIDER_ON_THE_WAY" },
   RIDER_ON_THE_WAY: { title: "Vas a recoger al pasajero", detail: "Al llegar, toca el marcador morado del pasajero en el mapa.", action: "Ya llegué al pasajero", next: "RIDER_ARRIVED" },
@@ -34,9 +42,14 @@ const appendConfirmedLocation = (trip: ActiveTrip, location: RecordedTripLocatio
   const locations = trip.locations || [];
   const last = locations.at(-1);
   const isDuplicate = last && Math.abs(last.lat - location.lat) < 0.000001 && Math.abs(last.lng - location.lng) < 0.000001;
+  const nextPoint = { lat: location.lat, lng: location.lng, accuracy: location.accuracy, heading: location.heading, createdAt: location.recordedAt };
+  // Conservamos el primer punto del viaje: es la bandera de Salida y el origen
+  // de la bitácora. Sólo rotamos puntos intermedios cuando la cola crece.
   const nextLocations = isDuplicate
     ? locations
-    : [...locations, { lat: location.lat, lng: location.lng, accuracy: location.accuracy, heading: location.heading, createdAt: location.recordedAt }].slice(-120);
+    : locations.length >= 120
+      ? [locations[0], ...locations.slice(-118), nextPoint]
+      : [...locations, nextPoint];
 
   return { ...trip, riderLat: location.lat, riderLng: location.lng, riderAccuracy: location.accuracy, riderHeading: location.heading, locations: nextLocations };
 };
@@ -77,6 +90,7 @@ export default function RiderPage() {
   const [showCancel, setShowCancel] = useState(false);
   const centeredFromGps = useRef(false);
   const lastLiveLocation = useRef<{ at: number; lat: number; lng: number } | null>(null);
+  const lastLocationErrorAt = useRef(0);
   const locationPublishInFlight = useRef(false);
   const tripTransitionInFlight = useRef(false);
 
@@ -117,13 +131,13 @@ export default function RiderPage() {
       if (locationPublishInFlight.current) return;
       locationPublishInFlight.current = true;
       try {
-        const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(next) });
+        const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(locationPayload(next)) });
         setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
       } finally {
         locationPublishInFlight.current = false;
       }
     }
-    else if (profile?.available) await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(next) });
+    else if (profile?.available) await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(locationPayload(next)) });
   }, [activeTrip?.id, profile?.available]);
   const refreshLocation = useCallback(() => {
     if (!navigator.geolocation) return setMessage("Activa GPS para recibir solicitudes cercanas.");
@@ -145,8 +159,22 @@ export default function RiderPage() {
     const watchId = navigator.geolocation.watchPosition(({ coords }) => {
       const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : undefined };
       setPosition(next);
-      const previous = lastLiveLocation.current; const moved = !previous || Math.hypot(next.lat - previous.lat, next.lng - previous.lng) > .00008;
-      if (moved || !previous || Date.now() - previous.at >= 4000) { lastLiveLocation.current = { at: Date.now(), lat: next.lat, lng: next.lng }; void publishLocation(next).catch(() => setMessage("No pudimos compartir tu ubicación. Reintentaremos automáticamente.")); }
+      const previous = lastLiveLocation.current;
+      const now = Date.now();
+      const moved = !previous || Math.hypot(next.lat - previous.lat, next.lng - previous.lng) > .00008;
+      const elapsed = previous ? now - previous.at : Number.POSITIVE_INFINITY;
+      // Mantiene el seguimiento vivo sin convertir cada lectura de GPS en una
+      // petición. Así se evita chocar con los límites de la API y la batería.
+      if (!previous || (moved && elapsed >= LOCATION_PUBLISH_INTERVAL_MS) || elapsed >= LOCATION_HEARTBEAT_MS) {
+        lastLiveLocation.current = { at: now, lat: next.lat, lng: next.lng };
+        void publishLocation(next).catch((error: ApiError) => {
+          if (error.code === "TRIP_NOT_ACTIVE" || error.code === "TRIP_NOT_FOUND") { void load(); return; }
+          if (now - lastLocationErrorAt.current >= 30_000) {
+            lastLocationErrorAt.current = now;
+            setMessage(error.code === "VALIDATION_ERROR" ? "La señal GPS no tiene una precisión válida. Seguiremos intentando." : "No pudimos sincronizar tu ubicación. Seguiremos intentando.");
+          }
+        });
+      }
     }, () => setMessage("No pudimos actualizar tu GPS durante el viaje."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
     return () => navigator.geolocation.clearWatch(watchId);
   }, [activeTrip?.id, publishLocation]);
@@ -197,7 +225,7 @@ export default function RiderPage() {
         }
         const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, {
           method: "PATCH",
-          body: JSON.stringify(position),
+          body: JSON.stringify(locationPayload(position)),
         });
         lastLiveLocation.current = { at: Date.now(), lat: recorded.lat, lng: recorded.lng };
         setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
