@@ -15,6 +15,12 @@ type ActiveTrip = RequestTrip & { status: "ACCEPTED" | "RIDER_ON_THE_WAY" | "RID
 type Readiness = { ready: boolean; blockers: Array<{ code: string; message: string; action: string }>; workZone: { department: string } | null; subscription: { plan?: string; daysRemaining: number } | null; dailyQuota: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
 
 const defaultPosition = { lat: 12.1364, lng: -86.2514 };
+const distanceToMeters = (left: MapPoint, right: { lat: number; lng: number }) => {
+  const latitude = (left.lat + right.lat) / 2 * Math.PI / 180;
+  const latitudeDistance = (right.lat - left.lat) * 111_320;
+  const longitudeDistance = (right.lng - left.lng) * 111_320 * Math.cos(latitude);
+  return Math.hypot(latitudeDistance, longitudeDistance);
+};
 const stages: Record<ActiveTrip["status"], { title: string; detail: string; action?: string; next?: string }> = {
   ACCEPTED: { title: "Ve a recoger al pasajero", detail: "Inicia la ruta hacia el marcador morado de recogida.", action: "Iniciar ruta al pasajero", next: "RIDER_ON_THE_WAY" },
   RIDER_ON_THE_WAY: { title: "Vas a recoger al pasajero", detail: "Al llegar, toca el marcador morado del pasajero en el mapa.", action: "Ya llegué al pasajero", next: "RIDER_ARRIVED" },
@@ -128,6 +134,11 @@ export default function RiderPage() {
   }, [activeTrip, profile?.available, publishLocation]);
   useEffect(() => { void load(); refreshLocation(); }, [load, refreshLocation]);
   useEffect(() => { lastLiveLocation.current = null; }, [activeTrip?.id]);
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(() => setMessage(""), 4_500);
+    return () => window.clearTimeout(timer);
+  }, [message]);
   useEffect(() => { const timer = window.setInterval(() => { void load(); if (profile?.available || activeTrip) refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, profile?.available, activeTrip?.id, refreshLocation]);
   useEffect(() => {
     if (!activeTrip || !navigator.geolocation) return;
@@ -175,6 +186,22 @@ export default function RiderPage() {
     setBusy(true);
 
     try {
+      // La vista puede recibir un punto GPS local antes de que la sincronización
+      // periódica termine. Para la recogida, el servidor debe validar la misma
+      // posición que el rider está viendo al tocar al pasajero.
+      if (nextStatus === "RIDER_ARRIVED") {
+        const meters = distanceToMeters(position, { lat: activeTrip.originLat, lng: activeTrip.originLng });
+        if (meters > 2) {
+          setMessage(`Acércate al pasajero para confirmar la recogida. Estás a ${Math.ceil(meters)} m.`);
+          return;
+        }
+        const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, {
+          method: "PATCH",
+          body: JSON.stringify(position),
+        });
+        lastLiveLocation.current = { at: Date.now(), lat: recorded.lat, lng: recorded.lng };
+        setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
+      }
       const updated = await api<ActiveTrip>(`/trips/${activeTrip.id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status: nextStatus }),

@@ -284,6 +284,16 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-traveled-route-line", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#38bdf8", "line-width": 5, "line-opacity": 1 } });
       instance.addLayer({ id: "motoya-traveled-route-highlight", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#eff6ff", "line-width": 1.4, "line-opacity": .86 } });
     }
+    // La instancia de MapLibre puede sobrevivir a una actualizaciÃ³n del
+    // frontend. Reaplicamos el diseÃ±o del avance para reemplazar cualquier
+    // capa verde heredada por el mismo azul continuo del trayecto actual.
+    if (instance.getLayer("motoya-traveled-route-shadow")) instance.setPaintProperty("motoya-traveled-route-shadow", "line-color", "#2563eb");
+    if (instance.getLayer("motoya-traveled-route-casing")) instance.setPaintProperty("motoya-traveled-route-casing", "line-color", "#1d4ed8");
+    if (instance.getLayer("motoya-traveled-route-line")) {
+      instance.setPaintProperty("motoya-traveled-route-line", "line-color", "#38bdf8");
+      instance.setPaintProperty("motoya-traveled-route-line", "line-dasharray", [1, .01]);
+    }
+    if (instance.getLayer("motoya-traveled-route-highlight")) instance.setPaintProperty("motoya-traveled-route-highlight", "line-color", "#eff6ff");
     const offRouteStart = isOffRoute
       ? renderedRoute[routeProgress.current.index] || routeMatch?.point
       : undefined;
@@ -314,7 +324,24 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false, offset?: [number, number]) => {
       if (!point) return;
       const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}${emphasized ? " motoya-target-marker" : ""}${kind === "request" ? " motoya-request-marker" : ""}`; element.style.zIndex = emphasized || kind === "request" ? "7" : kind === "rider" || kind === "riderWithPassenger" ? "5" : "3"; element.setAttribute("aria-label", tooltip); element.innerHTML = markerSvg(kind, point.heading, current.riderConnected);
-      if (clicked) element.addEventListener("click", clicked);
+      if (clicked) {
+        // MapLibre escucha los gestos del contenedor. Detenemos el gesto sobre
+        // el hito y atendemos pointerup además de click para que un toque en
+        // Android no se convierta en un arrastre silencioso del mapa.
+        let lastActivation = 0;
+        const activate = (event: Event) => {
+          const now = Date.now();
+          if (now - lastActivation < 450) return;
+          lastActivation = now;
+          event.preventDefault();
+          event.stopPropagation();
+          clicked();
+        };
+        element.style.pointerEvents = "auto";
+        element.addEventListener("pointerdown", (event) => event.stopPropagation());
+        element.addEventListener("pointerup", activate);
+        element.addEventListener("click", activate);
+      }
       const marker = new lib.Marker({ element, draggable, anchor: "center", offset }).setLngLat([point.lng, point.lat]).addTo(instance);
       if (moved) marker.on("dragend", () => { const next = marker.getLngLat(); moved({ lat: next.lat, lng: next.lng }); });
       markers.current.push(marker);
