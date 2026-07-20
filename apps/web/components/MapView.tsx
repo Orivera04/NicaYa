@@ -60,12 +60,10 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
   const markers = useRef<Array<{ remove: () => void }>>([]);
-  const observedTrail = useRef<MapPoint[]>([]);
-  const observedTripKey = useRef("");
   const fittedRoute = useRef("");
   const lastFocus = useRef("");
-  const [route, setRoute] = useState<MapPoint[]>([]);
-  const [secondaryRoute, setSecondaryRoute] = useState<MapPoint[]>([]);
+  const [route, setRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
+  const [secondaryRoute, setSecondaryRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
@@ -75,30 +73,36 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   themeRef.current = theme;
   const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
   props.current = { origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
-  const pickupLeg = routeFrom && routeTo && origin && destination && routeTo.lat === origin.lat && routeTo.lng === origin.lng;
+  const routeStart = riderWithPassenger ? origin : traveledPath[0] || routeFrom || origin;
+  const routeEnd = routeTo || destination;
+  const pickupLeg = routeStart && routeEnd && origin && destination && routeEnd.lat === origin.lat && routeEnd.lng === origin.lng;
   const nextRouteFrom = secondaryRouteFrom || (pickupLeg ? origin : undefined);
   const nextRouteTo = secondaryRouteTo || (pickupLeg ? destination : undefined);
+  const mainRouteKey = routeKey(routeStart, routeEnd);
+  const secondaryRouteKey = routeKey(nextRouteFrom, nextRouteTo);
+  const renderedRoute = route.key === mainRouteKey ? route.points : [];
+  const renderedSecondaryRoute = secondaryRoute.key === secondaryRouteKey ? secondaryRoute.points : [];
 
   useEffect(() => {
-    const from = routeFrom || origin; const to = routeTo || destination;
+    const from = routeStart; const to = routeEnd;
     const key = routeKey(from, to);
-    if (!key || !from || !to) { setRoute([]); setRouteUnavailable(false); return; }
+    if (!key || !from || !to) { setRoute({ key: "", points: [] }); setRouteUnavailable(false); return; }
     let live = true; const controller = new AbortController();
     fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Route unavailable")))
-      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) { setRoute(points); setRouteUnavailable(points.length < 2); } })
-      .catch(() => { if (live) { setRoute([]); setRouteUnavailable(true); } });
+      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) { setRoute({ key, points }); setRouteUnavailable(points.length < 2); } })
+      .catch(() => { if (live) { setRoute({ key, points: [] }); setRouteUnavailable(true); } });
     return () => { live = false; controller.abort(); };
-  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, routeFrom?.lat, routeFrom?.lng, routeTo?.lat, routeTo?.lng]);
+  }, [routeStart?.lat, routeStart?.lng, routeEnd?.lat, routeEnd?.lng]);
 
   useEffect(() => {
     const key = routeKey(nextRouteFrom, nextRouteTo);
-    if (!key || !nextRouteFrom || !nextRouteTo) { setSecondaryRoute([]); return; }
+    if (!key || !nextRouteFrom || !nextRouteTo) { setSecondaryRoute({ key: "", points: [] }); return; }
     let live = true; const controller = new AbortController();
     fetch(`https://router.project-osrm.org/route/v1/driving/${nextRouteFrom.lng},${nextRouteFrom.lat};${nextRouteTo.lng},${nextRouteTo.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Route unavailable")))
-      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) setSecondaryRoute(points); })
-      .catch(() => { if (live) setSecondaryRoute([]); });
+      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) setSecondaryRoute({ key, points }); })
+      .catch(() => { if (live) setSecondaryRoute({ key, points: [] }); });
     return () => { live = false; controller.abort(); };
   }, [nextRouteFrom?.lat, nextRouteFrom?.lng, nextRouteTo?.lat, nextRouteTo?.lng]);
 
@@ -107,35 +111,15 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     if (!instance || !lib || !instance.isStyleLoaded()) return;
     markers.current.forEach((marker) => marker.remove()); markers.current = [];
     const current = props.current;
-    const tripKey = current.origin && current.destination ? `${current.origin.lat.toFixed(5)},${current.origin.lng.toFixed(5)}:${current.destination.lat.toFixed(5)},${current.destination.lng.toFixed(5)}` : "";
-    if (tripKey !== observedTripKey.current) { observedTripKey.current = tripKey; observedTrail.current = []; }
-    if (current.rider && current.routeFrom && current.routeTo) { const previous = observedTrail.current.at(-1); if (!previous || distanceMeters(previous, current.rider) >= 4) observedTrail.current = [...observedTrail.current, current.rider].slice(-120); }
-    const renderedTrail = (() => {
-      const persisted = current.traveledPath;
-      const observed = observedTrail.current;
-
-      if (!persisted.length) return observed;
-
-      const lastPersisted = persisted.at(-1);
-      const matchingObservedIndex = lastPersisted
-        ? observed.findLastIndex((point) => distanceMeters(lastPersisted, point) < 12)
-        : -1;
-      const unsavedTail = matchingObservedIndex >= 0
-        ? observed.slice(matchingObservedIndex + 1)
-        : observed.slice(-1);
-      const pending = unsavedTail.filter((point, index) => {
-        const previous = index === 0 ? lastPersisted : unsavedTail[index - 1];
-        return !previous || distanceMeters(previous, point) >= 4;
-      });
-
-      return [...persisted, ...pending].slice(-120);
-    })();
-    const routeGoesToDestination = Boolean(current.routeTo && current.destination && current.routeTo.lat === current.destination.lat && current.routeTo.lng === current.destination.lng);
-    const routeGoesToPickup = Boolean(current.routeTo && current.origin && current.routeTo.lat === current.origin.lat && current.routeTo.lng === current.origin.lng);
-    const riderNearPickup = distanceMeters(current.rider, current.origin) <= 80;
+    const renderedTrail = current.traveledPath.filter((point, index, trail) => index === 0 || distanceMeters(trail[index - 1], point) >= 2).slice(-120);
+    const plannedFrom = current.riderWithPassenger ? current.origin : current.traveledPath[0] || current.routeFrom || current.origin;
+    const plannedTo = current.routeTo || current.destination;
+    const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
+    const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
+    const confirmedRider = renderedTrail.at(-1) || current.rider;
+    const riderNearPickup = distanceMeters(confirmedRider, current.origin) <= 80;
     const riderWithPassenger = current.riderWithPassenger || routeGoesToDestination || Boolean(current.onDestinationClick) || (riderNearPickup && !current.onOriginClick);
-    const from = current.routeFrom || current.origin; const to = current.routeTo || current.destination;
-    const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: (route.length > 1 ? route : from && to ? [from, to] : []).map((point) => [point.lng, point.lat]) } };
+    const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedRoute.map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
     if (source) source.setData(routeData);
     else {
@@ -144,9 +128,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-route-casing", type: "line", source: "motoya-route", paint: { "line-color": "#6b21a8", "line-width": 9, "line-opacity": .72 } });
       instance.addLayer({ id: "motoya-route-line", type: "line", source: "motoya-route", paint: { "line-color": "#e9d5ff", "line-width": 4.5, "line-opacity": .98, "line-dasharray": [1.6, 1.15] } });
     }
-    const isPickupLeg = current.routeFrom && current.routeTo && current.origin && current.destination && current.routeTo.lat === current.origin.lat && current.routeTo.lng === current.origin.lng;
+    const isPickupLeg = plannedFrom && plannedTo && current.origin && current.destination && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng;
     const secondaryFrom = current.secondaryRouteFrom || (isPickupLeg ? current.origin : undefined); const secondaryTo = current.secondaryRouteTo || (isPickupLeg ? current.destination : undefined);
-    const secondaryData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: (secondaryRoute.length > 1 ? secondaryRoute : secondaryFrom && secondaryTo ? [secondaryFrom, secondaryTo] : []).map((point) => [point.lng, point.lat]) } };
+    const secondaryData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedSecondaryRoute.map((point) => [point.lng, point.lat]) } };
     const secondarySource = instance.getSource("motoya-secondary-route") as GeoJSONSource | undefined;
     if (secondarySource) secondarySource.setData(secondaryData);
     else {
@@ -176,10 +160,10 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     addMarker(current.startFlag || renderedTrail[0], "start", false, "Salida del rider");
     if (current.pickupFlag || riderWithPassenger) addMarker(current.pickupFlag || current.origin, "pickup", false, "Pasajero recogido");
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), current.onDestinationClick ? "Iniciar viaje hacia el destino" : "Destino", current.onDestinationMove, current.onDestinationClick, routeGoesToDestination);
-    addMarker(current.rider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
+    addMarker(confirmedRider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
-    const visibleRoute = [...route, ...secondaryRoute, ...renderedTrail];
-    const key = `${to?.lat.toFixed(5) || ""},${to?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
+    const visibleRoute = [...renderedRoute, ...renderedSecondaryRoute, ...renderedTrail];
+    const key = `${plannedTo?.lat.toFixed(5) || ""},${plannedTo?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
     const paddingKey = fitPadding ? `${fitPadding.top}:${fitPadding.right}:${fitPadding.bottom}:${fitPadding.left}` : "default";
     if (visibleRoute.length > 1 && key && fittedRoute.current !== `${key}:${paddingKey}`) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: fitPadding || 54, maxZoom: 15, duration: 700 }); fittedRoute.current = `${key}:${paddingKey}`; }
   };
@@ -218,7 +202,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   useEffect(() => {
     render();
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
-    if (map.current && focus && (route.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
+    if (map.current && focus && (renderedRoute.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
   }, [origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, secondaryRoute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
   const retryMap = () => {
     if (!map.current) return;

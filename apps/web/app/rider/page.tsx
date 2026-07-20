@@ -9,7 +9,9 @@ import { api, getSession } from "@/lib/api";
 
 type Profile = { available: boolean };
 type RequestTrip = { id: string; originAddress: string; originLat: number; originLng: number; destinationAddress: string; destinationLat: number; destinationLng: number; estimatedPrice: string; proposedPrice?: string | null; currency: string; distanceKm: number; estimatedDurationMin: number; riderDistanceKm?: number };
-type ActiveTrip = RequestTrip & { status: "ACCEPTED" | "RIDER_ON_THE_WAY" | "RIDER_ARRIVED" | "IN_PROGRESS"; client?: { name: string }; locations?: Array<{ lat: number; lng: number; accuracy?: number | null; heading?: number | null; createdAt: string }> };
+type TripLocation = { lat: number; lng: number; accuracy?: number | null; heading?: number | null; createdAt: string };
+type RecordedTripLocation = { tripId: string; lat: number; lng: number; accuracy?: number | null; heading?: number | null; recordedAt: string };
+type ActiveTrip = RequestTrip & { status: "ACCEPTED" | "RIDER_ON_THE_WAY" | "RIDER_ARRIVED" | "IN_PROGRESS"; client?: { name: string }; riderLat?: number | null; riderLng?: number | null; riderAccuracy?: number | null; riderHeading?: number | null; locations?: TripLocation[] };
 type Readiness = { ready: boolean; blockers: Array<{ code: string; message: string; action: string }>; workZone: { department: string } | null; subscription: { plan?: string; daysRemaining: number } | null; dailyQuota: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
 
 const defaultPosition = { lat: 12.1364, lng: -86.2514 };
@@ -21,6 +23,17 @@ const stages: Record<ActiveTrip["status"], { title: string; detail: string; acti
 };
 
 const money = (trip: Pick<RequestTrip, "currency" | "estimatedPrice" | "proposedPrice">) => `${trip.currency} ${trip.proposedPrice || trip.estimatedPrice}`;
+
+const appendConfirmedLocation = (trip: ActiveTrip, location: RecordedTripLocation): ActiveTrip => {
+  const locations = trip.locations || [];
+  const last = locations.at(-1);
+  const isDuplicate = last && Math.abs(last.lat - location.lat) < 0.000001 && Math.abs(last.lng - location.lng) < 0.000001;
+  const nextLocations = isDuplicate
+    ? locations
+    : [...locations, { lat: location.lat, lng: location.lng, accuracy: location.accuracy, heading: location.heading, createdAt: location.recordedAt }].slice(-120);
+
+  return { ...trip, riderLat: location.lat, riderLng: location.lng, riderAccuracy: location.accuracy, riderHeading: location.heading, locations: nextLocations };
+};
 
 function RiderDailyQuota({ quota, plan }: { quota: Readiness["dailyQuota"]; plan?: string }) {
   if (!quota || quota.limit <= 0) return null;
@@ -66,12 +79,23 @@ export default function RiderPage() {
       setProfile(nextProfile); setReadiness(nextReadiness);
       const current = trips.find((trip) => ["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status));
       setActiveTrip(current || null);
+      const latestLocation = current?.riderLat != null && current.riderLng != null
+        ? { lat: current.riderLat, lng: current.riderLng, accuracy: current.riderAccuracy ?? undefined, heading: current.riderHeading ?? undefined }
+        : current?.locations?.at(-1);
+      if (latestLocation) {
+        const restoredPosition = { lat: latestLocation.lat, lng: latestLocation.lng, accuracy: latestLocation.accuracy ?? undefined, heading: latestLocation.heading ?? undefined };
+        setPosition(restoredPosition);
+        if (!centeredFromGps.current) setFocus(restoredPosition);
+      }
       if (nextReadiness.ready && nextProfile.available && !current) setRequests(await api<RequestTrip[]>("/riders/available-trips"));
       else setRequests([]);
     } catch (error) { setMessage((error as Error).message); }
   }, []);
   const publishLocation = useCallback(async (next: MapPoint & { accuracy?: number; heading?: number }) => {
-    if (activeTrip) await api(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(next) });
+    if (activeTrip) {
+      const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, { method: "PATCH", body: JSON.stringify(next) });
+      setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
+    }
     else if (profile?.available) await api("/riders/me/location", { method: "PATCH", body: JSON.stringify(next) });
   }, [activeTrip?.id, profile?.available]);
   const refreshLocation = useCallback(() => {
