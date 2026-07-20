@@ -40,6 +40,23 @@ const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
   const longitudeDistance = (right.lng - left.lng) * 111_320 * Math.cos(latitude);
   return Math.hypot(latitudeDistance, longitudeDistance);
 };
+const closestRoutePoint = (points: MapPoint[], point?: MapPoint) => {
+  if (!point || !points.length) return undefined;
+  let index = 0;
+  let distance = Number.POSITIVE_INFINITY;
+  points.forEach((candidate, candidateIndex) => {
+    const nextDistance = distanceMeters(candidate, point);
+    if (nextDistance < distance) {
+      index = candidateIndex;
+      distance = nextDistance;
+    }
+  });
+  return { point: points[index], index, distance };
+};
+// La tolerancia absorbe el margen normal del GPS urbano, sin ocultar un desvío
+// real. La precisión reportada por el dispositivo sólo puede ampliarla dentro
+// de un límite seguro para evitar "saltar" de una calle a otra.
+const routeSnapTolerance = (point?: MapPoint) => Math.max(55, Math.min(170, 42 + (point?.accuracy || 0)));
 const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", heading?: number, riderConnected = false) => {
   const color = kind === "rider" || kind === "riderWithPassenger" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : kind === "start" ? "#0f766e" : kind === "pickup" ? "#16a34a" : "#7c3aed";
   const isRider = kind === "rider" || kind === "riderWithPassenger";
@@ -63,10 +80,12 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const observedTrail = useRef<MapPoint[]>([]);
   const observedTripKey = useRef("");
   const routeProgress = useRef({ key: "", index: 0 });
+  const rerouteRequest = useRef<{ key: string; at: number; from?: MapPoint }>({ key: "", at: 0 });
   const fittedRoute = useRef("");
   const lastFocus = useRef("");
   const [route, setRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [secondaryRoute, setSecondaryRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
+  const [reroute, setReroute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
@@ -112,6 +131,48 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       .catch(() => { if (live) setSecondaryRoute({ key, points: [] }); });
     return () => { live = false; controller.abort(); };
   }, [nextRouteFrom?.lat, nextRouteFrom?.lng, nextRouteTo?.lat, nextRouteTo?.lng]);
+
+  // Si el GPS se sale de la geometría planeada no sustituimos la ruta original:
+  // la conservamos como referencia y solicitamos una alternativa por calles
+  // desde la posición real del rider hasta el siguiente hito. Se limita a una
+  // consulta cada 12 s o 45 m para respetar al proveedor de rutas y la batería.
+  useEffect(() => {
+    const liveRider = rider;
+    const target = routeEnd;
+    const closest = closestRoutePoint(renderedRoute, liveRider);
+    const key = mainRouteKey;
+
+    if (!liveRider || !target || renderedRoute.length < 2 || !key) {
+      setReroute((current) => current.key ? { key: "", points: [] } : current);
+      return;
+    }
+
+    if (!closest || closest.distance <= routeSnapTolerance(liveRider)) {
+      setReroute((current) => current.key ? { key: "", points: [] } : current);
+      return;
+    }
+
+    const now = Date.now();
+    const previous = rerouteRequest.current;
+    const riderMovedEnough = !previous.from || distanceMeters(previous.from, liveRider) >= 45;
+    if (previous.key === key && !riderMovedEnough && now - previous.at < 12_000) return;
+
+    rerouteRequest.current = { key, at: now, from: { ...liveRider } };
+    let active = true;
+    const controller = new AbortController();
+    fetch(`https://router.project-osrm.org/route/v1/driving/${liveRider.lng},${liveRider.lat};${target.lng},${target.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Reroute unavailable")))
+      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => {
+        const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || [];
+        if (active) setReroute({ key, points });
+      })
+      .catch(() => {
+        // La ruta original y el trazo GPS siguen disponibles aunque el proveedor
+        // externo no pueda recalcular temporalmente.
+        if (active) setReroute((current) => current.key === key ? { key: "", points: [] } : current);
+      });
+    return () => { active = false; controller.abort(); };
+  }, [rider?.lat, rider?.lng, rider?.accuracy, routeEnd?.lat, routeEnd?.lng, mainRouteKey, renderedRoute]);
 
   const render = () => {
     const instance = map.current; const lib = runtime.current;
@@ -161,9 +222,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
     const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
-    // El marcador usa el GPS más reciente. Para la línea visible proyectamos ese
-    // avance sobre la misma geometría de la ruta, evitando que el GPS crudo cree
-    // trazos paralelos, saltos o una ruta diferente para cliente y rider.
+    // El marcador siempre usa el GPS más reciente. Si se sale de la ruta, el
+    // avance real y el recálculo se dibujan aparte; así no falseamos el tramo
+    // completado ni reemplazamos el recorrido original que ven ambos perfiles.
     const liveRider = current.rider || renderedTrail.at(-1);
     // El pasajero solo puede pasar a bordo por una transición confirmada por el
     // servidor (IN_PROGRESS). Nunca deducimos este estado por cercanía al
@@ -171,6 +232,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // hacía que la vista del cliente mostrara una recogida que el rider aún no
     // había confirmado.
     const riderWithPassenger = Boolean(current.riderWithPassenger);
+    const routeMatch = closestRoutePoint(renderedRoute, liveRider);
+    const isOffRoute = Boolean(routeMatch && routeMatch.distance > routeSnapTolerance(liveRider));
+    const reroutePoints = reroute.key === mainRouteKey ? reroute.points : [];
     const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedRoute.map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
     if (source) source.setData(routeData);
@@ -199,17 +263,11 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const progressKey = `${mainRouteKey}:${routeGoesToDestination ? "destination" : routeGoesToPickup ? "pickup" : "idle"}`;
     if (routeProgress.current.key !== progressKey) routeProgress.current = { key: progressKey, index: 0 };
     let progressedRoute: MapPoint[] = [];
-    if (renderedRoute.length > 1 && liveRider) {
-      let nearestIndex = 0;
-      let nearestDistance = Number.POSITIVE_INFINITY;
-      renderedRoute.forEach((point, index) => {
-        const distance = distanceMeters(point, liveRider);
-        if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
-      });
-      // Un GPS urbano puede desviarse algunos metros de la calle. Dentro de un
-      // kilómetro preferimos mantener una ruta continua a dibujar un segmento
-      // recto falso entre el mapa y la posición del rider.
-      if (nearestDistance <= 1000) routeProgress.current.index = Math.max(routeProgress.current.index, nearestIndex);
+    if (renderedRoute.length > 1 && liveRider && routeMatch) {
+      // Sólo avanzamos el progreso de la ruta planeada mientras el GPS coincide
+      // con ella. Antes se admitía 1 km: un desvío podía marcar calles que el
+      // rider nunca recorrió y ocultaba el trayecto real fuera de la ruta.
+      if (!isOffRoute) routeProgress.current.index = Math.max(routeProgress.current.index, routeMatch.index);
       if (routeProgress.current.index > 0) progressedRoute = renderedRoute.slice(0, routeProgress.current.index + 1);
     }
     const completedRoute = progressedRoute.length > 1 ? progressedRoute : renderedRoute.length < 2 ? renderedTrail : [];
@@ -222,6 +280,33 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-traveled-route-casing", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#1d4ed8", "line-width": 10, "line-opacity": .95 } });
       instance.addLayer({ id: "motoya-traveled-route-line", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#38bdf8", "line-width": 5, "line-opacity": 1 } });
       instance.addLayer({ id: "motoya-traveled-route-highlight", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#eff6ff", "line-width": 1.4, "line-opacity": .86 } });
+    }
+    const offRouteStart = isOffRoute
+      ? renderedRoute[routeProgress.current.index] || routeMatch?.point
+      : undefined;
+    const offRouteTrail = (() => {
+      if (!offRouteStart || !liveRider) return [] as MapPoint[];
+      const trailMatch = closestRoutePoint(renderedTrail, offRouteStart);
+      const tail = trailMatch && trailMatch.distance <= 120 ? renderedTrail.slice(trailMatch.index + 1) : [];
+      const points = [offRouteStart, ...tail];
+      if (!points.length || distanceMeters(points.at(-1), liveRider) >= 3) points.push(liveRider);
+      return points.filter((point, index, path) => index === 0 || distanceMeters(path[index - 1], point) >= 3);
+    })();
+    const offRouteData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: offRouteTrail.map((point) => [point.lng, point.lat]) } };
+    const offRouteSource = instance.getSource("motoya-off-route-trail") as GeoJSONSource | undefined;
+    if (offRouteSource) offRouteSource.setData(offRouteData);
+    else {
+      instance.addSource("motoya-off-route-trail", { type: "geojson", data: offRouteData });
+      instance.addLayer({ id: "motoya-off-route-trail-glow", type: "line", source: "motoya-off-route-trail", paint: { "line-color": "#f97316", "line-width": 14, "line-opacity": .2, "line-blur": 5 } });
+      instance.addLayer({ id: "motoya-off-route-trail-line", type: "line", source: "motoya-off-route-trail", paint: { "line-color": "#fb923c", "line-width": 4.5, "line-opacity": .98, "line-dasharray": [1.1, .72] } });
+    }
+    const rerouteData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: reroutePoints.map((point) => [point.lng, point.lat]) } };
+    const rerouteSource = instance.getSource("motoya-reroute-route") as GeoJSONSource | undefined;
+    if (rerouteSource) rerouteSource.setData(rerouteData);
+    else {
+      instance.addSource("motoya-reroute-route", { type: "geojson", data: rerouteData });
+      instance.addLayer({ id: "motoya-reroute-route-glow", type: "line", source: "motoya-reroute-route", paint: { "line-color": "#06b6d4", "line-width": 15, "line-opacity": .18, "line-blur": 5 } });
+      instance.addLayer({ id: "motoya-reroute-route-line", type: "line", source: "motoya-reroute-route", paint: { "line-color": "#22d3ee", "line-width": 4.5, "line-opacity": .95, "line-dasharray": [1.25, .82] } });
     }
     const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false, offset?: [number, number]) => {
       if (!point) return;
@@ -242,7 +327,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), current.onDestinationClick ? "Iniciar viaje hacia el destino" : "Destino", current.onDestinationMove, current.onDestinationClick, routeGoesToDestination);
     addMarker(liveRider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
-    const visibleRoute = [...renderedRoute, ...renderedSecondaryRoute, ...renderedTrail];
+    const visibleRoute = [...renderedRoute, ...renderedSecondaryRoute, ...reroutePoints, ...offRouteTrail, ...renderedTrail];
     const key = `${plannedTo?.lat.toFixed(5) || ""},${plannedTo?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
     const paddingKey = fitPadding ? `${fitPadding.top}:${fitPadding.right}:${fitPadding.bottom}:${fitPadding.left}` : "default";
     if (visibleRoute.length > 1 && key && fittedRoute.current !== `${key}:${paddingKey}`) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: fitPadding || 54, maxZoom: 15, duration: 700 }); fittedRoute.current = `${key}:${paddingKey}`; }
@@ -283,7 +368,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     render();
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
     if (map.current && focus && (renderedRoute.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
-  }, [origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, secondaryRoute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
+  }, [origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, secondaryRoute, reroute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
   const retryMap = () => {
     if (!map.current) return;
     setLoading(true);
