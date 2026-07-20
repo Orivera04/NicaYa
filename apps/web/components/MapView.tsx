@@ -79,8 +79,12 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const routeStart = riderWithPassenger ? origin : traveledPath[0] || routeFrom || origin;
   const routeEnd = routeTo || destination;
   const pickupLeg = routeStart && routeEnd && origin && destination && routeEnd.lat === origin.lat && routeEnd.lng === origin.lng;
-  const nextRouteFrom = secondaryRouteFrom || (pickupLeg ? origin : undefined);
-  const nextRouteTo = secondaryRouteTo || (pickupLeg ? destination : undefined);
+  // Mientras se va a recoger al pasajero, la segunda ruta anticipa el tramo a
+  // destino. Después de confirmar la recogida, ese mismo espacio conserva el
+  // trayecto histórico desde la salida del rider hasta el punto de recogida.
+  const completedPickupLeg = Boolean(riderWithPassenger && startFlag && origin);
+  const nextRouteFrom = secondaryRouteFrom || (pickupLeg ? origin : completedPickupLeg ? startFlag : undefined);
+  const nextRouteTo = secondaryRouteTo || (pickupLeg ? destination : completedPickupLeg ? origin : undefined);
   const mainRouteKey = routeKey(routeStart, routeEnd);
   const secondaryRouteKey = routeKey(nextRouteFrom, nextRouteTo);
   const renderedRoute = route.key === mainRouteKey ? route.points : [];
@@ -177,7 +181,8 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-route-line", type: "line", source: "motoya-route", paint: { "line-color": "#e9d5ff", "line-width": 4.5, "line-opacity": .98, "line-dasharray": [1.6, 1.15] } });
     }
     const isPickupLeg = plannedFrom && plannedTo && current.origin && current.destination && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng;
-    const secondaryFrom = current.secondaryRouteFrom || (isPickupLeg ? current.origin : undefined); const secondaryTo = current.secondaryRouteTo || (isPickupLeg ? current.destination : undefined);
+    const secondaryWasCompleted = Boolean(current.riderWithPassenger && current.startFlag && current.origin && !current.secondaryRouteFrom && !current.secondaryRouteTo);
+    const secondaryFrom = current.secondaryRouteFrom || (isPickupLeg ? current.origin : secondaryWasCompleted ? current.startFlag : undefined); const secondaryTo = current.secondaryRouteTo || (isPickupLeg ? current.destination : secondaryWasCompleted ? current.origin : undefined);
     const secondaryData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedSecondaryRoute.map((point) => [point.lng, point.lat]) } };
     const secondarySource = instance.getSource("motoya-secondary-route") as GeoJSONSource | undefined;
     if (secondarySource) secondarySource.setData(secondaryData);
@@ -185,6 +190,11 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addSource("motoya-secondary-route", { type: "geojson", data: secondaryData });
       instance.addLayer({ id: "motoya-secondary-route-glow", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#fb923c", "line-width": 12, "line-opacity": .16, "line-blur": 4 } });
       instance.addLayer({ id: "motoya-secondary-route-line", type: "line", source: "motoya-secondary-route", paint: { "line-color": "#fdba74", "line-width": 3.5, "line-opacity": .9, "line-dasharray": [1.25, 1.2] } });
+    }
+    if (instance.getLayer("motoya-secondary-route-glow")) instance.setPaintProperty("motoya-secondary-route-glow", "line-color", secondaryWasCompleted ? "#10b981" : "#fb923c");
+    if (instance.getLayer("motoya-secondary-route-line")) {
+      instance.setPaintProperty("motoya-secondary-route-line", "line-color", secondaryWasCompleted ? "#22c55e" : "#fdba74");
+      instance.setPaintProperty("motoya-secondary-route-line", "line-dasharray", secondaryWasCompleted ? [1, 0.01] : [1.25, 1.2]);
     }
     const progressKey = `${mainRouteKey}:${routeGoesToDestination ? "destination" : routeGoesToPickup ? "pickup" : "idle"}`;
     if (routeProgress.current.key !== progressKey) routeProgress.current = { key: progressKey, index: 0 };
@@ -213,15 +223,20 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.addLayer({ id: "motoya-traveled-route-line", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#38bdf8", "line-width": 5, "line-opacity": 1 } });
       instance.addLayer({ id: "motoya-traveled-route-highlight", type: "line", source: "motoya-traveled-route", paint: { "line-color": "#eff6ff", "line-width": 1.4, "line-opacity": .86 } });
     }
-    const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false) => {
+    const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false, offset?: [number, number]) => {
       if (!point) return;
       const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}${emphasized ? " motoya-target-marker" : ""}${kind === "request" ? " motoya-request-marker" : ""}`; element.style.zIndex = emphasized || kind === "request" ? "7" : kind === "rider" || kind === "riderWithPassenger" ? "5" : "3"; element.setAttribute("aria-label", tooltip); element.innerHTML = markerSvg(kind, point.heading, current.riderConnected);
       if (clicked) element.addEventListener("click", clicked);
-      const marker = new lib.Marker({ element, draggable, anchor: "center" }).setLngLat([point.lng, point.lat]).addTo(instance);
+      const marker = new lib.Marker({ element, draggable, anchor: "center", offset }).setLngLat([point.lng, point.lat]).addTo(instance);
       if (moved) marker.on("dragend", () => { const next = marker.getLngLat(); moved({ lat: next.lat, lng: next.lng }); });
       markers.current.push(marker);
     };
-    if (!riderWithPassenger) addMarker(current.origin, "passenger", Boolean(current.onOriginMove), current.onOriginClick ? "Confirmar llegada al pasajero" : "Pasajero · punto de recogida", current.onOriginMove, current.onOriginClick, routeGoesToPickup);
+    // En el punto de recogida el GPS del rider puede quedar a 1–2 m del
+    // pasajero. Desplazamos solo la representación visual del pasajero para
+    // que se vean claramente dos personas distintas; su coordenada real y la
+    // regla de recogida en el servidor no se alteran.
+    const separatePassengerMarker = !riderWithPassenger && distanceMeters(liveRider, current.origin) <= 25;
+    if (!riderWithPassenger) addMarker(current.origin, "passenger", Boolean(current.onOriginMove), current.onOriginClick ? "Confirmar llegada al pasajero" : "Pasajero · punto de recogida", current.onOriginMove, current.onOriginClick, routeGoesToPickup, separatePassengerMarker ? [26, -18] : undefined);
     addMarker(current.startFlag || renderedTrail[0], "start", false, "Salida del rider");
     if (current.pickupFlag || riderWithPassenger) addMarker(current.pickupFlag || current.origin, "pickup", false, "Pasajero recogido");
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), current.onDestinationClick ? "Iniciar viaje hacia el destino" : "Destino", current.onDestinationMove, current.onDestinationClick, routeGoesToDestination);
