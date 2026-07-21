@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TripStatus } from "@prisma/client";
+import { Prisma, TripStatus } from "@prisma/client";
 import { ratingSchema, tripCreateSchema } from "@motoya/shared";
 import { prisma } from "../db.js";
 import { fail } from "../lib/error.js";
@@ -10,9 +10,23 @@ import { acceptTrip,acceptOffer,cancelTrip,changeStatus,completeTripByClient,cre
 export const tripsRouter=safeRouter(); tripsRouter.use(authenticate);
 tripsRouter.post("/estimate",authorize("CLIENT"),async(req,res)=>{const d=tripCreateSchema.parse(req.body);res.json(await estimate(d.origin,d.destination));});
 tripsRouter.post("/",authorize("CLIENT"),asyncHandler(async(req,res)=>{const d=tripCreateSchema.parse(req.body);const trip=await createTrip(req.user!.id,d.origin,d.destination,d.serviceCode,d.proposedPrice);req.app.get("io")?.to("riders").emit("trip:requested",trip);res.status(201).json(trip);}));
-const tripRelations={client:{select:{id:true,name:true,phone:true}},rider:{select:{id:true,name:true,phone:true,riderProfile:{select:{vehicleModel:true,vehiclePlate:true,workZoneLat:true,workZoneLng:true,workZoneUpdatedAt:true}}}},rating:true,locations:{orderBy:{createdAt:"asc"},take:120}} as const;
-tripsRouter.get("/",async(req,res)=>{const where=req.user!.role==="CLIENT"?{clientId:req.user!.id}:req.user!.role==="RIDER"?{riderId:req.user!.id}:{};res.json(await prisma.trip.findMany({where,include:tripRelations,orderBy:{createdAt:"desc"}}));});
-tripsRouter.get("/:id",async(req,res)=>{const t=await prisma.trip.findUnique({where:{id:req.params.id},include:{...tripRelations,histories:true}});if(!t)fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");if(req.user!.role!=="ADMIN"&&t.clientId!==req.user!.id&&t.riderId!==req.user!.id)fail(403,"FORBIDDEN","No puedes ver este viaje.");res.json(t);});
+const trackedLocationLimit=720;
+const tripRelations={client:{select:{id:true,name:true,phone:true}},rider:{select:{id:true,name:true,phone:true,riderProfile:{select:{vehicleModel:true,vehiclePlate:true,workZoneLat:true,workZoneLng:true,workZoneUpdatedAt:true}}}},rating:true,locations:{orderBy:{createdAt:"desc"},take:trackedLocationLimit}} as const;
+type TripWithRelations=Prisma.TripGetPayload<{include:typeof tripRelations}>;
+const withLocationHistory=async(trips:TripWithRelations[])=>{
+  const tripIds=trips.map((trip)=>trip.id);
+  const firstLocations=tripIds.length?await prisma.tripLocation.findMany({where:{tripId:{in:tripIds}},orderBy:{createdAt:"asc"},distinct:["tripId"]}):[];
+  const starts=new Map(firstLocations.map((location)=>[location.tripId,location]));
+  return trips.map((trip)=>({
+    ...trip,
+    locations:[...trip.locations].reverse(),
+    // Se conserva el punto de salida independientemente del límite del
+    // historial reciente, para que la bandera no se mueva al reingresar.
+    startLocation:starts.get(trip.id)??trip.locations.at(-1)??null,
+  }));
+};
+tripsRouter.get("/",asyncHandler(async(req,res)=>{const where=req.user!.role==="CLIENT"?{clientId:req.user!.id}:req.user!.role==="RIDER"?{riderId:req.user!.id}:{};const trips=await prisma.trip.findMany({where,include:tripRelations,orderBy:{createdAt:"desc"}});res.json(await withLocationHistory(trips));}));
+tripsRouter.get("/:id",asyncHandler(async(req,res)=>{const t=await prisma.trip.findUnique({where:{id:req.params.id},include:{...tripRelations,histories:true}});if(!t)fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");if(req.user!.role!=="ADMIN"&&t.clientId!==req.user!.id&&t.riderId!==req.user!.id)fail(403,"FORBIDDEN","No puedes ver este viaje.");res.json((await withLocationHistory([t]))[0]);}));
 tripsRouter.post("/:id/accept",authorize("RIDER"),async(req,res)=>{const t=await acceptTrip(req.params.id,req.user!.id);req.app.get("io")?.to(`user:${t.clientId}`).emit("trip:accepted",t);req.app.get("io")?.to("admins").emit("trip:status-updated",t);res.json(t);});
 tripsRouter.post("/:id/offers",authorize("RIDER"),async(req,res)=>{const amount=z.number().positive().max(2000).parse(req.body.amount);const offer=await makeOffer(req.params.id,req.user!.id,amount);req.app.get("io")?.to(`user:${(await prisma.trip.findUniqueOrThrow({where:{id:req.params.id}})).clientId}`).emit("trip:offer",offer);res.status(201).json(offer);});
 tripsRouter.get("/:id/offers",authorize("CLIENT"),async(req,res)=>{const trip=await prisma.trip.findUnique({where:{id:req.params.id}});if(!trip||trip.clientId!==req.user!.id)fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");res.json(await prisma.tripOffer.findMany({where:{tripId:req.params.id,status:"PENDING",expiresAt:{gt:new Date()}},include:{rider:{select:{id:true,name:true}},},orderBy:{createdAt:"desc"}}));});
