@@ -195,9 +195,20 @@ export default function RiderPage() {
   useEffect(() => () => {
     if (requestDecisionTimer.current !== null) window.clearTimeout(requestDecisionTimer.current);
   }, []);
-  useEffect(() => { const timer = window.setInterval(() => { void load(); if (profile?.available || activeTrip) refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, profile?.available, activeTrip?.id, refreshLocation]);
+  // El mapa del rider debe reflejar su desplazamiento incluso antes de
+  // conectarse. La posición se conserva únicamente en el dispositivo cuando
+  // está desconectado; sólo se publica al servidor al conectarse o durante un
+  // viaje activo.
+  useEffect(() => { const timer = window.setInterval(() => { void load(); refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, refreshLocation]);
   useEffect(() => {
-    if ((!activeTrip && !profile?.available) || !navigator.geolocation) return;
+    // Al conectarse reiniciamos el limitador para publicar el primer punto de
+    // inmediato. Así el icono local y la zona usada para solicitudes no quedan
+    // con la ubicación anterior durante varios segundos.
+    lastLiveLocation.current = null;
+    if (profile?.available) refreshLocation();
+  }, [profile?.available, refreshLocation]);
+  useEffect(() => {
+    if (!navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(({ coords }) => {
       const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : undefined };
       setPosition(next);
@@ -217,7 +228,14 @@ export default function RiderPage() {
           }
         });
       }
-    }, () => setMessage(activeTrip ? "No pudimos actualizar tu GPS durante el viaje." : "No pudimos actualizar tu GPS mientras recibes solicitudes."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
+    }, () => setMessage(activeTrip ? "No pudimos actualizar tu GPS durante el viaje." : "No pudimos actualizar tu GPS. Revisa los permisos."), {
+      // Desconectado seguimos refrescando el icono, pero con un modo más
+      // económico. Al conectarse o iniciar un viaje el efecto se reinicia con
+      // precisión alta para el matching y el seguimiento compartido.
+      enableHighAccuracy: Boolean(profile?.available || activeTrip),
+      maximumAge: profile?.available || activeTrip ? 3000 : 12000,
+      timeout: profile?.available || activeTrip ? 12000 : 20000,
+    });
     return () => navigator.geolocation.clearWatch(watchId);
   }, [activeTrip?.id, profile?.available, publishLocation]);
   useEffect(() => {
