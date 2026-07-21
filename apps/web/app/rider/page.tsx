@@ -18,6 +18,7 @@ const defaultPosition = { lat: 12.1364, lng: -86.2514 };
 const LOCATION_PUBLISH_INTERVAL_MS = 3_000;
 const LOCATION_HEARTBEAT_MS = 10_000;
 const renderedTripHistoryLimit = 720;
+const PICKUP_RADIUS_METERS = 5;
 const distanceToMeters = (left: MapPoint, right: { lat: number; lng: number }) => {
   const latitude = (left.lat + right.lat) / 2 * Math.PI / 180;
   const latitudeDistance = (right.lat - left.lat) * 111_320;
@@ -32,7 +33,7 @@ const locationPayload = (point: MapPoint) => ({
 });
 const stages: Record<ActiveTrip["status"], { title: string; detail: string; action?: string; next?: string }> = {
   ACCEPTED: { title: "Ve a recoger al pasajero", detail: "Inicia la ruta hacia el marcador morado de recogida.", action: "Iniciar ruta al pasajero", next: "RIDER_ON_THE_WAY" },
-  RIDER_ON_THE_WAY: { title: "Vas a recoger al pasajero", detail: "Al llegar, toca el marcador morado del pasajero en el mapa.", action: "Ya llegué al pasajero", next: "RIDER_ARRIVED" },
+  RIDER_ON_THE_WAY: { title: "Vas a recoger al pasajero", detail: "Al estar a menos de 5 m se habilitará el botón para llevar al pasajero.", action: "Recoger pasajero", next: "RIDER_ARRIVED" },
   RIDER_ARRIVED: { title: "Pasajero a bordo", detail: "Toca el marcador naranja de destino para iniciar el recorrido.", action: "Iniciar viaje al destino", next: "IN_PROGRESS" },
   IN_PROGRESS: { title: "Llevas al pasajero a su destino", detail: "Sigue la ruta indicada. El pasajero confirmará la llegada desde su aplicación." },
 };
@@ -148,7 +149,7 @@ export default function RiderPage() {
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : position.heading }; setPosition(next); if (!centeredFromGps.current) { setFocus(next); centeredFromGps.current = true; }
       if (profile?.available || activeTrip) try { await publishLocation(next); } catch { /* Retried on the next scheduled update. */ }
-    }, () => setMessage("No pudimos actualizar tu GPS. Revisa los permisos."), { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
+    }, () => setMessage("No pudimos actualizar tu GPS. Revisa los permisos."), { enableHighAccuracy: Boolean(profile?.available || activeTrip), timeout: 10000, maximumAge: 5_000 });
   }, [activeTrip, profile?.available, publishLocation]);
   useEffect(() => { void load(); refreshLocation(); }, [load, refreshLocation]);
   useEffect(() => { lastLiveLocation.current = null; }, [activeTrip?.id]);
@@ -159,7 +160,7 @@ export default function RiderPage() {
   }, [message]);
   useEffect(() => { const timer = window.setInterval(() => { void load(); if (profile?.available || activeTrip) refreshLocation(); }, 15000); return () => clearInterval(timer); }, [load, profile?.available, activeTrip?.id, refreshLocation]);
   useEffect(() => {
-    if (!activeTrip || !navigator.geolocation) return;
+    if ((!activeTrip && !profile?.available) || !navigator.geolocation) return;
     const watchId = navigator.geolocation.watchPosition(({ coords }) => {
       const next = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, heading: Number.isFinite(coords.heading) ? coords.heading ?? undefined : undefined };
       setPosition(next);
@@ -179,9 +180,9 @@ export default function RiderPage() {
           }
         });
       }
-    }, () => setMessage("No pudimos actualizar tu GPS durante el viaje."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
+    }, () => setMessage(activeTrip ? "No pudimos actualizar tu GPS durante el viaje." : "No pudimos actualizar tu GPS mientras recibes solicitudes."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 });
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [activeTrip?.id, publishLocation]);
+  }, [activeTrip?.id, profile?.available, publishLocation]);
   useEffect(() => {
     const session = getSession(); if (!session) return;
     const socketUrl = (process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api").replace(/\/api$/, "");
@@ -223,20 +224,17 @@ export default function RiderPage() {
       // posición que el rider está viendo al tocar al pasajero.
       if (nextStatus === "RIDER_ARRIVED") {
         const meters = distanceToMeters(position, { lat: activeTrip.originLat, lng: activeTrip.originLng });
-        if (meters > 2) {
+        if (meters > PICKUP_RADIUS_METERS) {
           setMessage(`Acércate al pasajero para confirmar la recogida. Estás a ${Math.ceil(meters)} m.`);
           return;
         }
-        const recorded = await api<RecordedTripLocation>(`/trips/${activeTrip.id}/location`, {
-          method: "PATCH",
-          body: JSON.stringify(locationPayload(position)),
-        });
-        lastLiveLocation.current = { at: Date.now(), lat: recorded.lat, lng: recorded.lng };
-        setActiveTrip((current) => current?.id === recorded.tripId ? appendConfirmedLocation(current, recorded) : current);
       }
       const updated = await api<ActiveTrip>(`/trips/${activeTrip.id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ status: nextStatus }),
+        // Al recoger, el backend recibe y valida esta misma posición dentro de
+        // la transacción. Así no existe una ventana entre "guardar GPS" y
+        // "pasajero a bordo" que desincronice las dos pantallas.
+        body: JSON.stringify({ status: nextStatus, ...(nextStatus === "RIDER_ARRIVED" ? { location: locationPayload(position) } : {}) }),
       });
 
       setActiveTrip((current) => current && current.id === updated.id
@@ -260,10 +258,14 @@ export default function RiderPage() {
   };
   const ready = readiness?.ready ?? false;
   const zone = readiness?.workZone?.department || "Zona sin configurar";
+  const pickupDistance = activeTrip?.status === "RIDER_ON_THE_WAY"
+    ? distanceToMeters(position, { lat: activeTrip.originLat, lng: activeTrip.originLng })
+    : Number.POSITIVE_INFINITY;
+  const canBoardPassenger = pickupDistance <= PICKUP_RADIUS_METERS;
 
   return <Guard roles={["RIDER"]}><MobileAppShell role="RIDER"><div className="dispatch-flow">
     {activeTrip && <section className={`rider-trip-overlay ${tripInfoExpanded ? "" : "is-collapsed"}`}><button className="tracking-collapse" aria-expanded={tripInfoExpanded} onClick={() => setTripInfoExpanded((expanded) => !expanded)}><span>{tripInfoExpanded ? "Ocultar información del viaje" : stages[activeTrip.status].title}</span><b>{tripInfoExpanded ? "⌄" : "⌃"}</b></button>{tripInfoExpanded && <><p>VIAJE ACTIVO · {activeTrip.status.replaceAll("_", " ")}</p><h1>{stages[activeTrip.status].title}</h1><span>{stages[activeTrip.status].detail}</span><div className="active-trip-route"><b>{activeTrip.client?.name || "Pasajero"}</b><span>{activeTrip.originAddress}</span><i>↓</i><span>{activeTrip.destinationAddress}</span><strong>{money(activeTrip)}</strong></div>{stages[activeTrip.status].action ? <button className="trip-main-action" disabled={busy} onClick={() => void moveTrip()}>{busy ? "Actualizando…" : stages[activeTrip.status].action}<span>→</span></button> : <p className="waiting-copy">El cliente confirmará la llegada al destino.</p>}{activeTrip.status !== "IN_PROGRESS" && <button className="cancel-link" disabled={busy} onClick={() => setShowCancel(true)}>Cancelar viaje</button>}</>}</section>}
-    <section className={`dispatch-map${!activeTrip && readiness?.dailyQuota ? " has-rider-quota" : ""}`}><MapView className="dispatch-map-canvas" rider={position} riderConnected={Boolean(profile?.available)} riderWithPassenger={activeTrip?.status === "IN_PROGRESS"} traveledPath={(activeTrip?.locations || []).map((point) => ({ lat: point.lat, lng: point.lng, heading: point.heading ?? undefined, accuracy: point.accuracy ?? undefined }))} startFlag={activeTrip?.startLocation ? { lat: activeTrip.startLocation.lat, lng: activeTrip.startLocation.lng } : activeTrip?.locations?.[0] ? { lat: activeTrip.locations[0].lat, lng: activeTrip.locations[0].lng } : undefined} pickupFlag={activeTrip && ["RIDER_ARRIVED", "IN_PROGRESS"].includes(activeTrip.status) ? { lat: activeTrip.originLat, lng: activeTrip.originLng } : undefined} origin={activeTrip ? { lat: activeTrip.originLat, lng: activeTrip.originLng } : undefined} destination={activeTrip ? { lat: activeTrip.destinationLat, lng: activeTrip.destinationLng } : undefined} routeFrom={activeTrip ? position : undefined} routeTo={activeTrip ? activeTrip.status === "IN_PROGRESS" ? { lat: activeTrip.destinationLat, lng: activeTrip.destinationLng } : { lat: activeTrip.originLat, lng: activeTrip.originLng } : undefined} focus={focus} recenterVersion={recenterVersion} requests={!activeTrip ? requests.map((trip) => ({ id: trip.id, lat: trip.originLat, lng: trip.originLng, title: trip.originAddress })) : []} onOriginClick={activeTrip?.status === "ACCEPTED" ? () => void moveTrip("RIDER_ON_THE_WAY") : activeTrip?.status === "RIDER_ON_THE_WAY" ? () => void moveTrip("RIDER_ARRIVED") : undefined} onDestinationClick={activeTrip?.status === "RIDER_ARRIVED" ? () => void moveTrip("IN_PROGRESS") : undefined} onRequestClick={(id) => { setSelectedId(id); setShowRequests(true); }} /><button className="map-recenter dispatch-recenter" aria-label="Centrar mi ubicación" onClick={() => { setFocus(position); setRecenterVersion((value) => value + 1); }}>◎</button><div className="dispatch-zone"><span>{zone}</span><b>{activeTrip ? stages[activeTrip.status].title : profile?.available ? "Conectado" : "Desconectado"}</b></div>{profile?.available && !activeTrip ? <button className="dispatch-available" onClick={() => setShowRequests(true)}>◉ Disponibles <b>{requests.length}</b></button> : null}</section>
+    <section className={`dispatch-map${!activeTrip && readiness?.dailyQuota ? " has-rider-quota" : ""}`}><MapView className="dispatch-map-canvas" rider={position} riderConnected={Boolean(profile?.available)} riderWithPassenger={activeTrip?.status === "IN_PROGRESS"} passengerLoading={busy && activeTrip?.status === "RIDER_ON_THE_WAY"} traveledPath={(activeTrip?.locations || []).map((point) => ({ lat: point.lat, lng: point.lng, heading: point.heading ?? undefined, accuracy: point.accuracy ?? undefined }))} startFlag={activeTrip?.startLocation ? { lat: activeTrip.startLocation.lat, lng: activeTrip.startLocation.lng } : activeTrip?.locations?.[0] ? { lat: activeTrip.locations[0].lat, lng: activeTrip.locations[0].lng } : undefined} pickupFlag={activeTrip && ["RIDER_ARRIVED", "IN_PROGRESS"].includes(activeTrip.status) ? { lat: activeTrip.originLat, lng: activeTrip.originLng } : undefined} origin={activeTrip ? { lat: activeTrip.originLat, lng: activeTrip.originLng } : undefined} destination={activeTrip ? { lat: activeTrip.destinationLat, lng: activeTrip.destinationLng } : undefined} routeFrom={activeTrip ? position : undefined} routeTo={activeTrip ? activeTrip.status === "IN_PROGRESS" ? { lat: activeTrip.destinationLat, lng: activeTrip.destinationLng } : { lat: activeTrip.originLat, lng: activeTrip.originLng } : undefined} focus={focus} recenterVersion={recenterVersion} requests={!activeTrip ? requests.map((trip) => ({ id: trip.id, lat: trip.originLat, lng: trip.originLng, title: trip.originAddress })) : []} onOriginClick={activeTrip?.status === "ACCEPTED" ? () => void moveTrip("RIDER_ON_THE_WAY") : activeTrip?.status === "RIDER_ON_THE_WAY" ? () => void moveTrip("RIDER_ARRIVED") : undefined} onDestinationClick={activeTrip?.status === "RIDER_ARRIVED" ? () => void moveTrip("IN_PROGRESS") : undefined} onRequestClick={(id) => { setSelectedId(id); setShowRequests(true); }} />{activeTrip?.status === "RIDER_ON_THE_WAY" && canBoardPassenger ? <button className="dispatch-pickup-action" disabled={busy} onClick={() => void moveTrip("RIDER_ARRIVED")}>{busy ? "Recogiendo pasajero…" : "Recoger pasajero"}<span>→</span></button> : null}<button className="map-recenter dispatch-recenter" aria-label="Centrar mi ubicación" onClick={() => { setFocus(position); setRecenterVersion((value) => value + 1); }}>◎</button><div className="dispatch-zone"><span>{zone}</span><b>{activeTrip ? stages[activeTrip.status].title : profile?.available ? "Conectado" : "Desconectado"}</b></div>{profile?.available && !activeTrip ? <button className="dispatch-available" onClick={() => setShowRequests(true)}>◉ Disponibles <b>{requests.length}</b></button> : null}</section>
     {!ready && readiness ? <section className="rider-blockers"><p>NO ESTÁS LISTO PARA TRABAJAR</p><h1>Completa tu activación</h1>{readiness.blockers.map((blocker) => <article key={blocker.code}><b>{blocker.action}</b><span>{blocker.message}</span></article>)}</section> : activeTrip ? <section className="active-trip-sheet"><div className="sheet-handle" /><p>VIAJE EN CURSO</p><h1>{stages[activeTrip.status].title}</h1><span>{stages[activeTrip.status].detail}</span><div className="active-trip-route"><b>{activeTrip.client?.name || "Pasajero"}</b><span>{activeTrip.originAddress}</span><i>↓</i><span>{activeTrip.destinationAddress}</span><strong>{money(activeTrip)}</strong></div>{stages[activeTrip.status].action ? <button className="trip-main-action" disabled={busy} onClick={moveTrip}>{busy ? "Actualizando…" : stages[activeTrip.status].action}<span>→</span></button> : <p className="waiting-copy">Espera a que el pasajero confirme la llegada.</p>}</section> : <section className="rider-connect-sheet"><div className="sheet-handle" /><p>{profile?.available ? "RECIBIENDO VIAJES" : "MODO DE TRABAJO"}</p><h1>{profile?.available ? "Estás conectado" : "Estás desconectado"}</h1><span>{profile?.available ? "Las solicitudes dentro de tu zona aparecerán aquí y en el botón Disponibles." : "Conéctate cuando estés listo para recibir solicitudes cercanas."}</span><RiderDailyQuota quota={readiness?.dailyQuota ?? null} plan={readiness?.subscription?.plan} />{readiness?.subscription && readiness.subscription.daysRemaining <= 7 ? <small>Tu plan {readiness.subscription.plan} vence en {readiness.subscription.daysRemaining} días.</small> : null}<button className="trip-main-action" disabled={busy || (!profile?.available && !ready)} onClick={connect}>{busy ? "Actualizando…" : profile?.available ? "Desconectarme" : "Conectarme"}<span>→</span></button></section>}
     {showRequests && <div className="flow-modal dispatch-modal" onClick={() => setShowRequests(false)}><section onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><p>SOLICITUDES DISPONIBLES</p>{selected ? <><h2>Viaje cercano</h2><div className="request-detail"><span>Recogida · {selected.riderDistanceKm?.toFixed(1) || "—"} km</span><b>{selected.originAddress}</b><i>↓</i><span>Destino</span><b>{selected.destinationAddress}</b><strong>{money(selected)}</strong><small>{selected.distanceKm.toFixed(1)} km · {selected.estimatedDurationMin} min</small></div><button className="trip-main-action" disabled={busy} onClick={accept}>{busy ? "Procesando…" : "Aceptar tarifa"}<span>→</span></button><div className="counter-offer"><label>O envía una contraoferta</label><div><input type="number" value={counterOffer} onChange={(event) => setCounterOffer(event.target.value)} placeholder="Monto en córdobas" /><button disabled={busy || !counterOffer} onClick={negotiate}>Enviar</button></div></div><button className="cancel-link" onClick={() => setSelectedId(null)}>Volver a solicitudes</button></> : <><h2>Solicitudes cercanas</h2><div className="request-list">{requests.length ? requests.map((trip) => <button key={trip.id} onClick={() => { setSelectedId(trip.id); setFocus({ lat: trip.originLat, lng: trip.originLng }); }}><span>{trip.riderDistanceKm?.toFixed(1) || "—"} km</span><b>{trip.originAddress}</b><small>→ {trip.destinationAddress}</small><strong>{money(trip)}</strong></button>) : <p className="waiting-copy">No hay solicitudes en tu radio de trabajo.</p>}</div></>}</section></div>}
     {showCancel && <div className="flow-modal" onClick={() => setShowCancel(false)}><section onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><p>CANCELAR VIAJE</p><h2>¿Deseas cancelar este viaje?</h2><span>El pasajero será notificado y la solicitud dejará de estar activa.</span><button className="trip-main-action" disabled={busy} onClick={cancelActiveTrip}>{busy ? "Cancelando…" : "Confirmar cancelación"}<span>→</span></button><button className="cancel-link rider-modal-dismiss" onClick={() => setShowCancel(false)}>Volver al viaje</button></section></div>}

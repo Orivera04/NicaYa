@@ -12,6 +12,30 @@ const operatingRadiusKm=75;
 function validateRoute(origin:{lat:number;lng:number},destination:{lat:number;lng:number}){const distance=haversineKm(origin,destination);if(distance<0.05)fail(422,"ORIGIN_EQUALS_DESTINATION","El origen y el destino deben ser diferentes.");if(haversineKm(operatingCenter,origin)>operatingRadiusKm||haversineKm(operatingCenter,destination)>operatingRadiusKm)fail(422,"OUTSIDE_OPERATING_AREA","Esta ubicación está fuera del área operativa actual de MotoYa.");return distance;}
 const active=["REQUESTED","ACCEPTED","RIDER_ON_THE_WAY","RIDER_ARRIVED","IN_PROGRESS"] as TripStatus[];
 const transitions:Partial<Record<TripStatus,TripStatus[]>>={REQUESTED:["ACCEPTED"],ACCEPTED:["RIDER_ON_THE_WAY","CANCELLED_BY_RIDER"],RIDER_ON_THE_WAY:["RIDER_ARRIVED","CANCELLED_BY_RIDER"],RIDER_ARRIVED:["IN_PROGRESS","CANCELLED_BY_RIDER"]};
+const pickupRadiusMeters=5;
+export async function boardPassenger(tripId:string,riderId:string,location?:{lat:number;lng:number;accuracy?:number;heading?:number}){
+  return prisma.$transaction(async tx=>{
+    // One authoritative transaction keeps rider and client synchronized even
+    // if the marker is tapped twice or the network retries the request.
+    const trip=await tx.trip.findUnique({where:{id:tripId}});
+    if(!trip) return fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");
+    if(trip.riderId!==riderId) fail(403,"FORBIDDEN","No puedes recoger al pasajero de este viaje.");
+    if(trip.status!=="RIDER_ON_THE_WAY") fail(409,"INVALID_TRIP_TRANSITION","El pasajero ya fue recogido o el viaje cambió.");
+    const pickupLocation=location||((trip.riderLat===null||trip.riderLng===null)?null:{lat:trip.riderLat,lng:trip.riderLng,accuracy:trip.riderAccuracy??undefined,heading:trip.riderHeading??undefined});
+    if(!pickupLocation) fail(409,"RIDER_LOCATION_REQUIRED","Actualiza tu ubicación antes de recoger al pasajero.");
+    const meters=haversineKm(pickupLocation!,{lat:trip.originLat,lng:trip.originLng})*1000;
+    if(meters>pickupRadiusMeters) fail(409,"TOO_FAR_FROM_PICKUP",`Acércate al pasajero. Debes estar a menos de ${pickupRadiusMeters} m; estás a ${Math.ceil(meters)} m.`);
+    if(location){
+      const recordedAt=new Date();
+      await tx.trip.update({where:{id:tripId},data:{riderLat:location.lat,riderLng:location.lng,riderAccuracy:location.accuracy??null,riderHeading:location.heading??null,riderLocationUpdatedAt:recordedAt}});
+      await tx.tripLocation.create({data:{tripId,...location,createdAt:recordedAt}});
+    }
+    const updated=await tx.trip.updateMany({where:{id:tripId,riderId,status:"RIDER_ON_THE_WAY"},data:{status:"IN_PROGRESS"}});
+    if(!updated.count) fail(409,"TRIP_CHANGED","El viaje cambió. Actualiza la pantalla antes de continuar.");
+    await tx.tripStatusHistory.createMany({data:[{tripId,status:"RIDER_ARRIVED",actorId:riderId},{tripId,status:"IN_PROGRESS",actorId:riderId}]});
+    return tx.trip.findUniqueOrThrow({where:{id:tripId},include:{client:{select:{id:true,name:true,phone:true}},rider:{select:{id:true,name:true,phone:true,riderProfile:{select:{vehicleModel:true,vehiclePlate:true}}}},histories:true}});
+  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+}
 export async function estimate(origin:{lat:number;lng:number},destination:{lat:number;lng:number}){ const s=await getSettings(); const distanceKm=validateRoute(origin,destination); const amount=Math.max(Number(s.minimumFare),Number(s.baseFare)+distanceKm*Number(s.pricePerKm)); return {distanceKm,estimatedDurationMin:Math.max(3,Math.ceil(distanceKm*3)),minimumFare:Number(s.minimumFare),maximumFare:2000,estimatedPrice:Number(amount.toFixed(2)),currency:s.currency}; }
 export async function createTrip(clientId:string, origin:{lat:number;lng:number;address:string}, destination:{lat:number;lng:number;address:string}, serviceCode="MOTO", proposedPrice?:number){ const quote=await estimate(origin,destination); if(proposedPrice!==undefined&&(proposedPrice<quote.minimumFare||proposedPrice>quote.maximumFare))fail(422,"INVALID_PROPOSED_PRICE",`La propuesta debe estar entre ${quote.minimumFare} y ${quote.maximumFare} ${quote.currency}.`); return prisma.$transaction(async tx=>{ const exists=await tx.trip.findFirst({where:{clientId,status:{in:active}}}); if(exists) fail(409,"CLIENT_HAS_ACTIVE_TRIP","Ya tienes un viaje activo."); const trip=await tx.trip.create({data:{clientId,originLat:origin.lat,originLng:origin.lng,originAddress:origin.address,destinationLat:destination.lat,destinationLng:destination.lng,destinationAddress:destination.address,distanceKm:quote.distanceKm,estimatedDurationMin:quote.estimatedDurationMin,estimatedPrice:new Prisma.Decimal(quote.estimatedPrice),proposedPrice:proposedPrice?new Prisma.Decimal(proposedPrice):null,serviceCode,expiresAt:new Date(Date.now()+5*60_000),currency:quote.currency}}); await tx.tripStatusHistory.create({data:{tripId:trip.id,status:"REQUESTED",actorId:clientId}}); return trip; },{isolationLevel:"Serializable"}); }
 export async function makeOffer(tripId:string,riderId:string,amount:number){const trip=await prisma.trip.findUnique({where:{id:tripId}});if(!trip||trip.status!=="REQUESTED"||!trip.expiresAt||trip.expiresAt<new Date())fail(409,"TRIP_EXPIRED","La solicitud ya no está disponible.");const settings=await getSettings();const minimum=Number(settings.minimumFare);if(amount<minimum||amount>2000)fail(422,"INVALID_OFFER_AMOUNT",`La contraoferta debe estar entre ${minimum} y 2000 ${trip.currency}.`);await prisma.$transaction(async tx=>{await eligibleRider(tx,riderId);await tx.tripOffer.updateMany({where:{tripId,riderId,status:"PENDING"},data:{status:"EXPIRED"}});const offer=await tx.tripOffer.create({data:{tripId,riderId,amount:new Prisma.Decimal(amount),currency:trip.currency,expiresAt:new Date(Date.now()+2*60_000)}});await tx.auditLog.create({data:{actorId:riderId,action:"TRIP_COUNTER_OFFER_CREATED",entity:"TripOffer",entityId:offer.id,metadata:{tripId,amount,currency:trip.currency}}});});return prisma.tripOffer.findFirstOrThrow({where:{tripId,riderId,status:"PENDING"},orderBy:{createdAt:"desc"},include:{rider:{select:{id:true,name:true}}}});}

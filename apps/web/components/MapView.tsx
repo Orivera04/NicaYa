@@ -8,7 +8,7 @@ import { getSession } from "@/lib/api";
 export type MapPoint = { lat: number; lng: number; label?: string; heading?: number; accuracy?: number };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
 type FitPadding = { top: number; right: number; bottom: number; left: number };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; traveledPath?: MapPoint[]; startFlag?: MapPoint; pickupFlag?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; showFocusControl?: boolean; className?: string };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; passengerLoading?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; secondaryRouteFrom?: MapPoint; secondaryRouteTo?: MapPoint; traveledPath?: MapPoint[]; startFlag?: MapPoint; pickupFlag?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; showFocusControl?: boolean; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
 const createMapStyle = (theme: MapTheme, devicePixelRatio = 1): StyleSpecification => {
@@ -58,7 +58,7 @@ const closestRoutePoint = (points: MapPoint[], point?: MapPoint) => {
 // de un límite seguro para evitar "saltar" de una calle a otra.
 const routeSnapTolerance = (point?: MapPoint) => Math.max(55, Math.min(170, 42 + (point?.accuracy || 0)));
 const renderedPathPointLimit = 720;
-const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", heading?: number, riderConnected = false) => {
+const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", heading?: number, riderConnected = false, loading = false) => {
   const color = kind === "rider" || kind === "riderWithPassenger" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : kind === "start" ? "#0f766e" : kind === "pickup" ? "#16a34a" : "#7c3aed";
   const isRider = kind === "rider" || kind === "riderWithPassenger";
   const isFlag = kind === "destination" || kind === "start" || kind === "pickup";
@@ -69,11 +69,11 @@ const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destina
     : '<path d="M12 21.2s7.1-5.5 7.1-12.1a7.1 7.1 0 1 0-14.2 0c0 6.6 7.1 12.1 7.1 12.1Z"/><circle cx="12" cy="9" r="2.2"/>';
   const direction = "";
   const liveState = riderConnected && isRider ? '<span class="motoya-live-state" aria-hidden="true"></span>' : "";
-  const classes = `motoya-map-icon motoya-marker--${kind}${isRider ? " motoya-rider-marker" : ""}${kind === "passenger" ? " motoya-passenger-marker" : ""}${kind === "destination" ? " motoya-destination-marker" : ""}${kind === "start" ? " motoya-start-marker" : ""}${kind === "pickup" ? " motoya-pickup-marker" : ""}${kind === "riderWithPassenger" ? " motoya-rider-passenger" : ""}${riderConnected && isRider ? " motoya-rider-live" : ""}`;
-  return `<span class="${classes}" style="background:${color}">${direction}<span class="motoya-marker-glow"></span><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${liveState}${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}${isFlag ? `<span class="motoya-flag-caption">${kind === "start" ? "Salida" : kind === "pickup" ? "Recogida" : "Destino"}</span>` : ""}</span>`;
+  const classes = `motoya-map-icon motoya-marker--${kind}${isRider ? " motoya-rider-marker" : ""}${kind === "passenger" ? " motoya-passenger-marker" : ""}${kind === "destination" ? " motoya-destination-marker" : ""}${kind === "start" ? " motoya-start-marker" : ""}${kind === "pickup" ? " motoya-pickup-marker" : ""}${kind === "riderWithPassenger" ? " motoya-rider-passenger" : ""}${riderConnected && isRider ? " motoya-rider-live" : ""}${loading && kind === "passenger" ? " motoya-passenger-loading" : ""}`;
+  return `<span class="${classes}" style="background:${color}">${direction}<span class="motoya-marker-glow"></span><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${loading && kind === "passenger" ? '<span class="motoya-passenger-loader" aria-hidden="true"></span>' : ""}${liveState}${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}${isFlag ? `<span class="motoya-flag-caption">${kind === "start" ? "Salida" : kind === "pickup" ? "Recogida" : "Destino"}</span>` : ""}</span>`;
 };
 
-export function MapView({ origin, destination, rider, riderConnected = false, riderWithPassenger = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath = [], startFlag, pickupFlag, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, showFocusControl = false, className }: Props) {
+export function MapView({ origin, destination, rider, riderConnected = false, riderWithPassenger = false, passengerLoading = false, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath = [], startFlag, pickupFlag, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, showFocusControl = false, className }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -86,15 +86,17 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const [route, setRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [secondaryRoute, setSecondaryRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [reroute, setReroute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
+  const [matchedTrail, setMatchedTrail] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
   const [theme, setTheme] = useState<MapTheme>("positron");
   const [focusLost, setFocusLost] = useState(false);
   const themeRef = useRef(theme);
+  const matchingRequest = useRef<{ key: string; at: number }>({ key: "", at: 0 });
   themeRef.current = theme;
-  const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
-  props.current = { origin, destination, rider, riderConnected, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
+  const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, passengerLoading, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
+  props.current = { origin, destination, rider, riderConnected, riderWithPassenger, passengerLoading, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
   // La guía siempre comienza en el punto real de salida del viaje. El trazo
   // azul se construye aparte, únicamente con puntos GPS confirmados.
   const routeStart = riderWithPassenger ? origin : startFlag || traveledPath[0] || routeFrom || origin;
@@ -108,6 +110,34 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const secondaryRouteKey = routeKey(nextRouteFrom, nextRouteTo);
   const renderedRoute = route.key === mainRouteKey ? route.points : [];
   const renderedSecondaryRoute = secondaryRoute.key === secondaryRouteKey ? secondaryRoute.points : [];
+  const trailSamples = traveledPath.filter((point, index, points) => index === 0 || distanceMeters(points[index - 1], point) >= 4).slice(-90);
+  const trailKey = trailSamples.length > 1 ? trailSamples.map((point) => `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`).join(";") : "";
+
+  useEffect(() => {
+    if (!trailKey || trailSamples.length < 2) {
+      setMatchedTrail((current) => current.key ? { key: "", points: [] } : current);
+      return;
+    }
+    const now = Date.now();
+    if (matchingRequest.current.key === trailKey || now - matchingRequest.current.at < 7_000) return;
+    matchingRequest.current = { key: trailKey, at: now };
+    let active = true;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const coordinates = trailSamples.map((point) => `${point.lng},${point.lat}`).join(";");
+      fetch(`https://router.project-osrm.org/match/v1/driving/${coordinates}?overview=full&geometries=geojson&tidy=true`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : Promise.reject(new Error("Match unavailable")))
+        .then((data: { matchings?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => {
+          const points = data.matchings?.flatMap((matching) => matching.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []) || [];
+          if (active && points.length > 1) setMatchedTrail({ key: trailKey, points });
+        })
+        // Si el proveedor temporalmente no puede ajustar la ruta, el GPS crudo
+        // permanece visible. Nunca se reemplaza por una calle inventada.
+        .catch(() => { if (active) setMatchedTrail((current) => current.key === trailKey ? { key: "", points: [] } : current); });
+    }, 450);
+    return () => { active = false; window.clearTimeout(timer); controller.abort(); };
+  // trailKey resume los puntos; así evitamos recálculos por renders sin GPS nuevo.
+  }, [trailKey]);
 
   useEffect(() => {
     const from = routeStart; const to = routeEnd;
@@ -218,6 +248,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
 
       return [...persistedTrail, ...tail].filter((point, index, trail) => index === 0 || distanceMeters(trail[index - 1], point) >= 3).slice(-renderedPathPointLimit);
     })();
+    const roadFollowingTrail = matchedTrail.key === trailKey && matchedTrail.points.length > 1 ? matchedTrail.points : renderedTrail;
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
     const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
@@ -232,7 +263,13 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // había confirmado.
     const riderWithPassenger = Boolean(current.riderWithPassenger);
     const reroutePoints = reroute.key === mainRouteKey ? reroute.points : [];
-    const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedRoute.map((point) => [point.lng, point.lat]) } };
+    // Purple is the remaining guide, not a second representation of ground
+    // already covered by the rider. Blue remains the confirmed GPS journey.
+    const closestPlannedPoint = closestRoutePoint(renderedRoute, liveRider);
+    const remainingRoute = closestPlannedPoint && closestPlannedPoint.distance <= routeSnapTolerance(liveRider)
+      ? renderedRoute.slice(Math.min(closestPlannedPoint.index, Math.max(0, renderedRoute.length - 1)))
+      : renderedRoute;
+    const routeData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: remainingRoute.map((point) => [point.lng, point.lat]) } };
     const source = instance.getSource("motoya-route") as GeoJSONSource | undefined;
     if (source) source.setData(routeData);
     else {
@@ -258,7 +295,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // El azul es la bitácora GPS real, no el "progreso" inferido sobre una ruta
     // sugerida. Así, si el rider toma otro camino, se dibuja exactamente ese
     // camino y ninguna calle de la guía se marca como completada.
-    const traveledData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: renderedTrail.map((point) => [point.lng, point.lat]) } };
+    const traveledData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: roadFollowingTrail.map((point) => [point.lng, point.lat]) } };
     const traveledSource = instance.getSource("motoya-traveled-route") as GeoJSONSource | undefined;
     if (traveledSource) traveledSource.setData(traveledData);
     else {
@@ -300,7 +337,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     }
     const addMarker = (point: MapPoint | undefined, kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", draggable: boolean, tooltip: string, moved?: (point: MapPoint) => void, clicked?: () => void, emphasized = false, offset?: [number, number]) => {
       if (!point) return;
-      const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}${emphasized ? " motoya-target-marker" : ""}${kind === "request" ? " motoya-request-marker" : ""}`; element.style.zIndex = emphasized || kind === "request" ? "7" : kind === "rider" || kind === "riderWithPassenger" ? "5" : "3"; element.setAttribute("aria-label", tooltip); element.innerHTML = markerSvg(kind, point.heading, current.riderConnected);
+      const element = document.createElement("button"); element.type = "button"; element.className = `motoya-map-marker${clicked ? " motoya-action-marker" : ""}${emphasized ? " motoya-target-marker" : ""}${kind === "request" ? " motoya-request-marker" : ""}`; element.style.zIndex = emphasized || kind === "request" ? "7" : kind === "rider" || kind === "riderWithPassenger" ? "5" : "3"; element.setAttribute("aria-label", tooltip); element.setAttribute("aria-busy", kind === "passenger" && current.passengerLoading ? "true" : "false"); element.innerHTML = markerSvg(kind, point.heading, current.riderConnected, kind === "passenger" && current.passengerLoading);
       if (clicked) {
         // MapLibre escucha los gestos del contenedor. Detenemos el gesto sobre
         // el hito y atendemos pointerup además de click para que un toque en
@@ -334,7 +371,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     addMarker(current.destination, "destination", Boolean(current.onDestinationMove), current.onDestinationClick ? "Iniciar viaje hacia el destino" : "Destino", current.onDestinationMove, current.onDestinationClick, routeGoesToDestination);
     addMarker(liveRider, riderWithPassenger ? "riderWithPassenger" : "rider", false, riderWithPassenger ? "Rider con pasajero" : "Rider · motocicleta");
     current.requests.forEach((request) => addMarker(request, "request", false, request.title, undefined, () => props.current.onRequestClick?.(request.id)));
-    const visibleRoute = [...renderedRoute, ...renderedSecondaryRoute, ...reroutePoints, ...renderedTrail];
+    const visibleRoute = [...remainingRoute, ...renderedSecondaryRoute, ...reroutePoints, ...roadFollowingTrail];
     const key = `${plannedTo?.lat.toFixed(5) || ""},${plannedTo?.lng.toFixed(5) || ""}:${secondaryTo?.lat.toFixed(5) || ""},${secondaryTo?.lng.toFixed(5) || ""}`;
     const paddingKey = fitPadding ? `${fitPadding.top}:${fitPadding.right}:${fitPadding.bottom}:${fitPadding.left}` : "default";
     if (visibleRoute.length > 1 && key && fittedRoute.current !== `${key}:${paddingKey}`) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: fitPadding || 54, maxZoom: 15, duration: 700 }); fittedRoute.current = `${key}:${paddingKey}`; }
@@ -374,7 +411,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     render();
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
     if (map.current && focus && (renderedRoute.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
-  }, [origin, destination, rider, riderWithPassenger, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, secondaryRoute, reroute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
+  }, [origin, destination, rider, riderWithPassenger, passengerLoading, routeFrom, routeTo, secondaryRouteFrom, secondaryRouteTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, secondaryRoute, reroute, matchedTrail, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
   const retryMap = () => {
     if (!map.current) return;
     setLoading(true);
