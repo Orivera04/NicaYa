@@ -7,14 +7,15 @@ import { LocationSearch } from "@/components/LocationSearch";
 import { MapPoint, MapView } from "@/components/MapView";
 import { MobileAppShell } from "@/components/MobileAppShell";
 import { api, getSession } from "@/lib/api";
+import { mergeTrackingPoints, newestTrackingPoint, TRACKING_HISTORY_LIMIT, trackingPointFromEvent, type TripTrackingEvent, type TripTrackingPoint } from "@/lib/trip-tracking";
 
 type Place = MapPoint & { address: string; reference?: string | null };
 type SavedPlace = Place & { id: string; label: string };
 type Quote = { distanceKm: number; estimatedDurationMin: number; minimumFare: number; maximumFare: number; estimatedPrice: number; currency: string };
 type Offer = { id: string; amount: string; currency: string; rider: { name: string } };
-type TripLocation = { lat: number; lng: number; accuracy?: number | null; heading?: number | null; createdAt: string };
+type TripLocation = TripTrackingPoint;
 type ActiveTrip = { id: string; status: string; originAddress: string; destinationAddress: string; originLat: number; originLng: number; destinationLat: number; destinationLng: number; riderLat?: number | null; riderLng?: number | null; riderLocationUpdatedAt?: string | null; locations?: TripLocation[]; startLocation?: TripLocation | null; currency: string; estimatedPrice: string; finalPrice?: string | null; rider?: { name: string; riderProfile?: { vehicleModel?: string | null; vehiclePlate?: string | null; workZoneLat?: number | null; workZoneLng?: number | null } | null } | null };
-type LiveLocation = { tripId: string; lat: number; lng: number; accuracy?: number | null; heading?: number | null; recordedAt: string };
+type LiveLocation = TripTrackingEvent;
 
 type Stage = "ROUTE" | "QUOTE" | "REVIEW" | "SEARCHING" | "TRACKING";
 const initialPlace: Place = { lat: 12.1364, lng: -86.2514, address: "Tu ubicación actual" };
@@ -26,7 +27,6 @@ const statusCopy: Record<string, string> = {
   RIDER_ARRIVED: "Tu rider llegó. Verifica la moto antes de iniciar.",
   IN_PROGRESS: "Viaje en curso. Confirma la llegada solo al llegar al destino.",
 };
-const renderedTripHistoryLimit = 720;
 
 const toTripTrail = (trip: ActiveTrip): MapPoint[] => (trip.locations || []).map((point) => ({
   lat: point.lat,
@@ -69,19 +69,24 @@ const keepNewestLocation = (current: LiveLocation | null, incoming: LiveLocation
 // de un evento de GPS no haga que la moto retroceda visualmente.
 const mergeTripLocation = (current: ActiveTrip | null, incoming: ActiveTrip): ActiveTrip => {
   if (!current || current.id !== incoming.id) return incoming;
-  const currentLocation = latestTripLocation(current);
-  const incomingLocation = latestTripLocation(incoming);
-  const latest = keepNewestLocation(currentLocation, incomingLocation);
-  if (latest === incomingLocation) return incoming;
+  const locations = mergeTrackingPoints(current.locations, incoming.locations, TRACKING_HISTORY_LIMIT);
+  const latest = newestTrackingPoint(locations);
+  const incomingTime = incoming.riderLocationUpdatedAt ? Date.parse(incoming.riderLocationUpdatedAt) : 0;
+  const latestTime = latest ? Date.parse(latest.createdAt) : 0;
+  return latest && latestTime > incomingTime
+    ? { ...incoming, locations, riderLat: latest.lat, riderLng: latest.lng, riderLocationUpdatedAt: latest.createdAt }
+    : { ...incoming, locations };
+};
 
-  const incomingLocations = incoming.locations || [];
-  const currentLocations = current.locations || [];
+const applyTrackingEvent = (trip: ActiveTrip | null, event: LiveLocation): ActiveTrip | null => {
+  if (!trip || trip.id !== event.tripId) return trip;
+  const locations = mergeTrackingPoints(trip.locations, [trackingPointFromEvent(event)], TRACKING_HISTORY_LIMIT);
   return {
-    ...incoming,
-    riderLat: current.riderLat,
-    riderLng: current.riderLng,
-    riderLocationUpdatedAt: current.riderLocationUpdatedAt,
-    locations: currentLocations.length >= incomingLocations.length ? currentLocations : incomingLocations,
+    ...trip,
+    riderLat: event.lat,
+    riderLng: event.lng,
+    riderLocationUpdatedAt: event.recordedAt,
+    locations,
   };
 };
 
@@ -99,7 +104,6 @@ export default function ClientPage() {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [activeTrip, setActiveTrip] = useState<ActiveTrip | null>(null);
   const [liveRider, setLiveRider] = useState<LiveLocation | null>(null);
-  const [tripTrail, setTripTrail] = useState<MapPoint[]>([]);
   const [tripInfoExpanded, setTripInfoExpanded] = useState(true);
   const [searchingExpanded, setSearchingExpanded] = useState(true);
   const [showSearch, setShowSearch] = useState(false);
@@ -110,6 +114,7 @@ export default function ClientPage() {
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const tripTrail = useMemo(() => activeTrip ? toTripTrail(activeTrip) : [], [activeTrip]);
 
   const selectPlace = (place: Place, target = editing) => {
     setFocus(place); setRecenterVersion((current) => current + 1); setQuote(null); setProposedPrice(""); setShowSearch(false);
@@ -137,7 +142,6 @@ export default function ClientPage() {
       if (current) {
         setTripId(current.id);
         setActiveTrip((previous) => mergeTripLocation(previous, current));
-        setTripTrail(toTripTrail(current));
         setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(current)));
         setTripInfoExpanded(true);
         setStage(current.status === "REQUESTED" ? "SEARCHING" : "TRACKING");
@@ -151,10 +155,6 @@ export default function ClientPage() {
       try {
         const trip = await api<ActiveTrip>(`/trips/${tripId}`);
         setActiveTrip((previous) => mergeTripLocation(previous, trip));
-        setTripTrail((current) => {
-          const fromServer = toTripTrail(trip);
-          return fromServer.length > current.length ? fromServer : current;
-        });
         setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip)));
         if (trip.status === "REQUESTED") {
           setStage("SEARCHING");
@@ -175,35 +175,15 @@ export default function ClientPage() {
     const updateLocation = (location: LiveLocation) => {
       if (location.tripId !== tripId) return;
       setLiveRider((previous) => keepNewestLocation(previous, location));
-      setActiveTrip((current) => {
-        if (!current || current.id !== location.tripId) return current;
-        const latest = keepNewestLocation(latestTripLocation(current), location);
-        if (latest !== location) return current;
-        const locations = current.locations || [];
-        const last = locations.at(-1);
-        const duplicate = last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001;
-        return {
-          ...current,
-          riderLat: location.lat,
-          riderLng: location.lng,
-          riderLocationUpdatedAt: location.recordedAt,
-          locations: duplicate ? locations : [...locations, { lat: location.lat, lng: location.lng, accuracy: location.accuracy, heading: location.heading, createdAt: location.recordedAt }].slice(-renderedTripHistoryLimit),
-        };
-      });
-      setTripTrail((current) => {
-        const last = current.at(-1);
-        return last && Math.abs(last.lat - location.lat) < .000001 && Math.abs(last.lng - location.lng) < .000001
-          ? current
-          : [...current, { lat: location.lat, lng: location.lng, heading: location.heading ?? undefined, accuracy: location.accuracy ?? undefined }].slice(-renderedTripHistoryLimit);
-      });
+      setActiveTrip((current) => applyTrackingEvent(current, location));
     };
-    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then((trip) => { setActiveTrip((previous) => mergeTripLocation(previous, trip)); setTripTrail((current) => { const serverTrail = toTripTrail(trip); return serverTrail.length > current.length ? serverTrail : current; }); setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip))); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); }).catch(() => undefined); };
-    const handleCancelled = (trip: { id: string }) => { if (trip.id !== tripId) return; setShowCancel(false); setTripId(null); setActiveTrip(null); setLiveRider(null); setTripTrail([]); setTripInfoExpanded(true); setOffers([]); setDestination(null); setQuote(null); setProposedPrice(""); setStage("ROUTE"); setEditing("destination"); setMessage("El viaje fue cancelado."); };
-    socket.on("trip:location-updated", updateLocation);
+    const updateTripState = () => { void api<ActiveTrip>(`/trips/${tripId}`).then(async (trip) => { setActiveTrip((previous) => mergeTripLocation(previous, trip)); if (trip.status === "REQUESTED") { setLiveRider(null); setStage("SEARCHING"); setOffers(await api<Offer[]>(`/trips/${tripId}/offers`)); setMessage("El rider canceló antes de salir. Seguimos buscando riders cercanos."); } else { setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(trip))); if (["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"].includes(trip.status)) setStage("TRACKING"); } }).catch(() => undefined); };
+    const handleCancelled = (trip: { id: string }) => { if (trip.id !== tripId) return; setShowCancel(false); setTripId(null); setActiveTrip(null); setLiveRider(null); setTripInfoExpanded(true); setOffers([]); setDestination(null); setQuote(null); setProposedPrice(""); setStage("ROUTE"); setEditing("destination"); setMessage("El viaje fue cancelado."); };
+    socket.on("trip:tracking-updated", updateLocation);
     socket.on("trip:accepted", updateTripState);
     socket.on("trip:status-updated", updateTripState);
     socket.on("trip:cancelled", handleCancelled);
-    return () => { socket.off("trip:location-updated", updateLocation); socket.off("trip:accepted", updateTripState); socket.off("trip:status-updated", updateTripState); socket.off("trip:cancelled", handleCancelled); socket.disconnect(); };
+    return () => { socket.off("trip:tracking-updated", updateLocation); socket.off("trip:accepted", updateTripState); socket.off("trip:status-updated", updateTripState); socket.off("trip:cancelled", handleCancelled); socket.disconnect(); };
   }, [tripId]);
 
   const getQuote = async () => {
@@ -226,7 +206,15 @@ export default function ClientPage() {
   };
   const acceptOffer = async (offerId: string) => {
     if (!tripId) return; setBusy(true);
-    try { await api(`/trips/${tripId}/offers/${offerId}/accept`, { method: "POST" }); setStage("TRACKING"); setMessage("Oferta aceptada. Tu rider irá hacia el origen."); }
+    try {
+      // La respuesta ya contiene al rider asignado y el estado autoritativo.
+      // No esperamos el siguiente poll para comenzar el seguimiento visual.
+      const accepted = await api<ActiveTrip>(`/trips/${tripId}/offers/${offerId}/accept`, { method: "POST" });
+      setActiveTrip((previous) => mergeTripLocation(previous, accepted));
+      setLiveRider((previous) => keepNewestLocation(previous, latestTripLocation(accepted)));
+      setStage("TRACKING");
+      setMessage("Oferta aceptada. Tu rider irá hacia el origen.");
+    }
     catch (error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
   };
@@ -248,7 +236,7 @@ export default function ClientPage() {
     catch (error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
   };
-  const reset = () => { setTripId(null); setActiveTrip(null); setLiveRider(null); setTripTrail([]); setTripInfoExpanded(true); setOffers([]); setDestination(null); setQuote(null); setProposedPrice(""); setStage("ROUTE"); setEditing("destination"); };
+  const reset = () => { setTripId(null); setActiveTrip(null); setLiveRider(null); setTripInfoExpanded(true); setOffers([]); setDestination(null); setQuote(null); setProposedPrice(""); setStage("ROUTE"); setEditing("destination"); };
   const selectFavorite = (place: SavedPlace) => selectPlace(place, "destination");
   const openSaveDestination = () => {
     if (!destination) return;
