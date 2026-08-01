@@ -24,7 +24,7 @@ export default function LoginPage() {
       const form = new FormData(formRef.current);
       const session = await api<Session>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+        body: JSON.stringify({ email: form.get("email"), password: form.get("password"), remember }),
       });
       setSession(session, remember);
       router.push(session.user.role === "ADMIN" ? "/admin" : session.user.role === "RIDER" ? "/rider" : "/client/home");
