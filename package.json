@@ -2,7 +2,7 @@
   "name": "motoya",
   "private": true,
   "version": "0.1.0",
-  "packageManager": "pnpm@9.15.4",
+  "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "concurrently \"pnpm --filter @motoya/api dev\" \"pnpm --filter @motoya/web dev\"",
     "dev:api": "pnpm --filter @motoya/api dev",
