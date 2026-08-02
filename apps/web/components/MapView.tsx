@@ -272,7 +272,10 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
 
     if (tripKey !== observedTripKey.current) {
       observedTripKey.current = tripKey;
-      observedTrail.current = [];
+      // El primer punto persistido en la aceptación fija la salida real del
+      // viaje. Sembrar la cola local evita que el avance azul espere a un
+      // refresco o a la primera respuesta de map-matching.
+      observedTrail.current = current.startFlag ? [{ ...current.startFlag }] : [];
     }
 
     // La cola local recupera la respuesta fluida de la versión anterior: el rider
@@ -332,7 +335,12 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
         ? [matchedEndpoint, livePoint]
         : unmatchedTail;
     })();
-    const displayedTrailSegments = matchedSegments.length
+    // Nunca dejamos que un resultado de match atrasado congele el avance. Si
+    // el rider ya se movió una distancia significativa desde la última muestra
+    // usada por el proveedor, se renderiza el historial GPS inmediato hasta
+    // que llegue el siguiente ajuste de calles.
+    const matchedIsFresh = Boolean(lastMatchedInput && renderedTrail.at(-1) && distanceMeters(lastMatchedInput, renderedTrail.at(-1)) <= 65);
+    const displayedTrailSegments = matchedSegments.length && matchedIsFresh
       ? [...matchedSegments, ...(liveTail.length >= 2 ? [liveTail] : [])]
       : (renderedTrail.length >= 2 ? [renderedTrail] : []);
     const roadFollowingTrail = displayedTrailSegments.flat();

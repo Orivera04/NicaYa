@@ -293,7 +293,7 @@ export default function RiderPage() {
     }
     setBusy(true);
     try {
-      const accepted = await api<ActiveTrip>(`/trips/${selected.id}/accept`, { method: "POST" });
+      const accepted = await api<ActiveTrip>(`/trips/${selected.id}/accept`, { method: "POST", body: JSON.stringify({ location: locationPayload(position) }) });
       // La aceptación es el único punto que inicia el desplazamiento hacia la
       // recogida. Pintamos el viaje inmediatamente, sin esperar al siguiente
       // sondeo ni a un evento de Socket, y fijamos la salida real del rider.
