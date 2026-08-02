@@ -322,6 +322,8 @@ model Trip {
  finalPrice Decimal? @db.Decimal(10,2)
  estimatedDurationMin Int
  serviceCode String @default("MOTO")
+ notes String?
+ stops Json?
  expiresAt DateTime?
  currency String @default("USD")
  createdAt DateTime @default(now())
@@ -375,6 +377,8 @@ model Rating {
  rider User @relation("RatingRider",fields:[riderId],references:[id])
  score Int
  comment String?
+ riderScore Int?
+ riderComment String?
  createdAt DateTime @default(now())
 }
 model AuditLog {
