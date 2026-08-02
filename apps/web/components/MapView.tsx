@@ -8,7 +8,7 @@ import { api, getSession } from "@/lib/api";
 export type MapPoint = { lat: number; lng: number; label?: string; heading?: number; accuracy?: number; capturedAt?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
 type FitPadding = { top: number; right: number; bottom: number; left: number };
-type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; passengerLoading?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; traveledPath?: MapPoint[]; startFlag?: MapPoint; pickupFlag?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; showFocusControl?: boolean; className?: string };
+type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; passengerLoading?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; traveledPath?: MapPoint[]; startFlag?: MapPoint; pickupFlag?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; showFocusControl?: boolean; followRider?: boolean; className?: string };
 type Runtime = typeof import("maplibre-gl");
 
 const createMapStyle = (theme: MapTheme, devicePixelRatio = 1): StyleSpecification => {
@@ -39,6 +39,31 @@ const distanceMeters = (left?: MapPoint, right?: MapPoint) => {
   const latitudeDistance = (right.lat - left.lat) * 111_320;
   const longitudeDistance = (right.lng - left.lng) * 111_320 * Math.cos(latitude);
   return Math.hypot(latitudeDistance, longitudeDistance);
+};
+const normalizeHeading = (heading?: number) => Number.isFinite(heading) && (heading ?? -1) >= 0 && (heading ?? 361) <= 360
+  ? (heading as number) % 360
+  : undefined;
+const headingDifference = (left?: number, right?: number) => {
+  if (left === undefined || right === undefined) return Number.POSITIVE_INFINITY;
+  return Math.abs(((left - right + 540) % 360) - 180);
+};
+const bearingBetween = (from: MapPoint, to: MapPoint) => {
+  const fromLatitude = from.lat * Math.PI / 180;
+  const toLatitude = to.lat * Math.PI / 180;
+  const longitudeDelta = (to.lng - from.lng) * Math.PI / 180;
+  const y = Math.sin(longitudeDelta) * Math.cos(toLatitude);
+  const x = Math.cos(fromLatitude) * Math.sin(toLatitude) - Math.sin(fromLatitude) * Math.cos(toLatitude) * Math.cos(longitudeDelta);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+};
+const navigationHeadingFor = (point?: MapPoint, history: MapPoint[] = []) => {
+  const reported = normalizeHeading(point?.heading);
+  if (reported !== undefined) return reported;
+  if (!point) return undefined;
+  const previous = [...history].reverse().find((candidate) => {
+    const distance = distanceMeters(candidate, point);
+    return distance >= 3 && distance <= 500;
+  });
+  return previous ? bearingBetween(previous, point) : undefined;
 };
 const closestRoutePoint = (points: MapPoint[], point?: MapPoint) => {
   if (!point || !points.length) return undefined;
@@ -85,7 +110,11 @@ const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destina
   return `<span class="${classes}" style="background:${color}">${direction}<span class="motoya-marker-glow"></span><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>${loading && kind === "passenger" ? '<span class="motoya-passenger-loader" aria-hidden="true"></span>' : ""}${liveState}${kind === "riderWithPassenger" ? '<span class="motoya-passenger-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-3.5 3-5 6.5-5s5.8 1.5 6.5 5"/></svg></span>' : ""}${isFlag ? `<span class="motoya-flag-caption">${kind === "start" ? "Salida" : kind === "pickup" ? "Recogida" : "Destino"}</span>` : ""}</span>`;
 };
 
-export function MapView({ origin, destination, rider, riderConnected = false, riderWithPassenger = false, passengerLoading = false, routeFrom, routeTo, traveledPath = [], startFlag, pickupFlag, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, showFocusControl = false, className }: Props) {
+export function MapView({ origin, destination, rider, riderConnected = false, riderWithPassenger = false, passengerLoading = false, routeFrom, routeTo, traveledPath = [], startFlag, pickupFlag, focus, recenterVersion = 0, requests = [], fitPadding, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick, showFocusControl = false, followRider = false, className }: Props) {
+  // routeFrom/routeTo sólo se entregan durante seguimiento de un viaje. La
+  // prop permite forzarlo explícitamente sin convertir la vista de búsqueda
+  // ni la cotización en una navegación que robe el foco al usuario.
+  const followNavigation = followRider || Boolean(rider && routeFrom && routeTo && origin && destination);
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const runtime = useRef<Runtime | null>(null);
@@ -95,6 +124,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const rerouteRequest = useRef<{ key: string; at: number; from?: MapPoint }>({ key: "", at: 0 });
   const fittedRoute = useRef("");
   const lastFocus = useRef("");
+  const followPausedRef = useRef(false);
+  const followModeRef = useRef(followNavigation);
+  const lastNavigationCamera = useRef<{ point?: MapPoint; heading?: number; at: number }>({ at: 0 });
   const [route, setRoute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [reroute, setReroute] = useState<{ key: string; points: MapPoint[] }>({ key: "", points: [] });
   const [loading, setLoading] = useState(true);
@@ -103,9 +135,11 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const [matchedTrail, setMatchedTrail] = useState<{ tripKey: string; segments: MapPoint[][]; sourceLast?: MapPoint }>({ tripKey: "", segments: [] });
   const [theme, setTheme] = useState<MapTheme>("positron");
   const [focusLost, setFocusLost] = useState(false);
+  const [followPaused, setFollowPaused] = useState(false);
   const matchRequest = useRef({ tripKey: "", at: 0 });
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  followModeRef.current = followNavigation;
   const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, passengerLoading, routeFrom, routeTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
   props.current = { origin, destination, rider, riderConnected, riderWithPassenger, passengerLoading, routeFrom, routeTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick };
   // La guía siempre comienza en el punto real de salida del viaje. El trazo
@@ -119,6 +153,40 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const renderedRoute = route.key === mainRouteKey ? route.points : [];
   const matchingPoints = useMemo(() => compactTrailForMatching(traveledPath), [traveledPath]);
   const matchingKey = useMemo(() => matchingPoints.map((point) => `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`).join(";"), [matchingPoints]);
+  const navigationHeading = useMemo(
+    () => navigationHeadingFor(rider, traveledPath),
+    [rider?.lat, rider?.lng, rider?.heading, traveledPath],
+  );
+  const setFollowingPaused = (paused: boolean) => {
+    followPausedRef.current = paused;
+    setFollowPaused(paused);
+  };
+  const centerRiderForNavigation = (point: MapPoint, heading: number | undefined, force = false) => {
+    const instance = map.current;
+    if (!instance) return false;
+    const now = Date.now();
+    const previous = lastNavigationCamera.current;
+    const moved = previous.point ? distanceMeters(previous.point, point) : Number.POSITIVE_INFINITY;
+    const turned = headingDifference(previous.heading, heading);
+    if (!force && moved < 1.5 && turned < 5 && now - previous.at < 1_000) return false;
+
+    const viewportHeight = host.current?.clientHeight || 600;
+    // La coordenada del rider queda por debajo del centro visual: de esta
+    // manera se ve más recorrido por delante, igual que en navegación GPS.
+    const lowerViewportOffset = Math.max(82, Math.min(156, Math.round(viewportHeight * .18)));
+    const currentZoom = instance.getZoom();
+    instance.easeTo({
+      center: [point.lng, point.lat],
+      zoom: Math.max(15.6, Math.min(17.2, Number.isFinite(currentZoom) ? currentZoom : 16.2)),
+      bearing: heading ?? 0,
+      pitch: heading === undefined ? 0 : 46,
+      offset: [0, lowerViewportOffset],
+      duration: force || !previous.point ? 760 : 620,
+      essential: true,
+    });
+    lastNavigationCamera.current = { point: { ...point }, heading, at: now };
+    return true;
+  };
   useEffect(() => {
     const from = routeStart; const to = routeEnd;
     const key = routeKey(from, to);
@@ -401,7 +469,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const visibleRoute = [...guideRoute, ...roadFollowingTrail];
     const key = `${plannedTo?.lat.toFixed(5) || ""},${plannedTo?.lng.toFixed(5) || ""}`;
     const paddingKey = fitPadding ? `${fitPadding.top}:${fitPadding.right}:${fitPadding.bottom}:${fitPadding.left}` : "default";
-    if (visibleRoute.length > 1 && key && fittedRoute.current !== `${key}:${paddingKey}`) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: fitPadding || 54, maxZoom: 15, duration: 700 }); fittedRoute.current = `${key}:${paddingKey}`; }
+    if (!followModeRef.current && visibleRoute.length > 1 && key && fittedRoute.current !== `${key}:${paddingKey}`) { const bounds = visibleRoute.reduce((currentBounds, point) => currentBounds.extend([point.lng, point.lat]), new lib.LngLatBounds([visibleRoute[0].lng, visibleRoute[0].lat], [visibleRoute[0].lng, visibleRoute[0].lat])); instance.fitBounds(bounds, { padding: fitPadding || 54, maxZoom: 15, duration: 700 }); fittedRoute.current = `${key}:${paddingKey}`; }
   };
 
   useEffect(() => {
@@ -413,6 +481,15 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       const mapStyle = createMapStyle("positron", window.devicePixelRatio);
       const instance = new lib.Map({ container: host.current, style: mapStyle, center: [center.lng, center.lat], zoom: 13, dragRotate: true, pitchWithRotate: false, touchZoomRotate: true });
       instance.on("click", (event) => props.current.onPick?.({ lat: event.lngLat.lat, lng: event.lngLat.lng, label: "Ubicación seleccionada" }));
+      const pauseFollowForManualGesture = (event?: { originalEvent?: unknown }) => {
+        // Los eventos de cámara generados por easeTo no contienen un gesto
+        // original. Sólo una interacción real del usuario debe liberar la
+        // cámara, para que el modo navegación no se pause a sí mismo.
+        if (!followModeRef.current || (event && !event.originalEvent)) return;
+        followPausedRef.current = true;
+        setFollowPaused(true);
+        setFocusLost(true);
+      };
       const updateFocusVisibility = () => {
         const point = props.current.rider || props.current.focus || props.current.origin;
         if (!point) return setFocusLost(false);
@@ -422,6 +499,10 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
       instance.on("load", ready);
       instance.on("style.load", ready);
       instance.on("error", (event) => { if ((event as { sourceId?: string }).sourceId?.startsWith("motoya-base-")) { setLoading(false); setMapError(true); } });
+      instance.on("dragstart", () => pauseFollowForManualGesture());
+      instance.on("rotatestart", pauseFollowForManualGesture);
+      instance.on("pitchstart", pauseFollowForManualGesture);
+      instance.on("zoomstart", pauseFollowForManualGesture);
       instance.on("moveend", updateFocusVisibility);
       map.current = instance;
     }).catch(() => { if (active) { setLoading(false); setMapError(true); } });
@@ -439,6 +520,17 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
     if (map.current && focus && (renderedRoute.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
   }, [origin, destination, rider, riderWithPassenger, passengerLoading, routeFrom, routeTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, reroute, matchedTrail, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
+  useEffect(() => {
+    // Un nuevo viaje activo comienza siguiendo al rider. Al salir de él se
+    // limpia la memoria de cámara para no heredar una pausa manual anterior.
+    followPausedRef.current = false;
+    setFollowPaused(false);
+    lastNavigationCamera.current = { at: 0 };
+  }, [followNavigation, origin?.lat, origin?.lng, destination?.lat, destination?.lng]);
+  useEffect(() => {
+    if (!followNavigation || !rider || followPausedRef.current || !map.current?.isStyleLoaded()) return;
+    if (centerRiderForNavigation(rider, navigationHeading)) setFocusLost(false);
+  }, [followNavigation, rider?.lat, rider?.lng, rider?.heading, navigationHeading, route.key, route.points.length]);
   const retryMap = () => {
     if (!map.current) return;
     setLoading(true);
@@ -453,20 +545,30 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const focusMap = () => {
     const point = rider || focus || origin || destination;
     if (!map.current || !point) return;
+    if (followNavigation && rider) {
+      setFollowingPaused(false);
+      centerRiderForNavigation(rider, navigationHeading, true);
+      setFocusLost(false);
+      return;
+    }
     map.current.flyTo({ center: [point.lng, point.lat], zoom: 15, essential: true });
     setFocusLost(false);
   };
   const changeZoom = (amount: number) => {
     if (!map.current) return;
+    if (followNavigation) setFollowingPaused(true);
     map.current.easeTo({ zoom: Math.max(2, Math.min(20, map.current.getZoom() + amount)), duration: 180 });
   };
-  const resetMapBearing = () => map.current?.easeTo({ bearing: 0, pitch: 0, duration: 220 });
+  const resetMapBearing = () => {
+    if (followNavigation) setFollowingPaused(true);
+    map.current?.easeTo({ bearing: 0, pitch: 0, duration: 220 });
+  };
 
   return <div data-theme={theme} className={`map-view relative isolate z-0 h-72 w-full overflow-hidden rounded-2xl bg-slate-200 ${className || ""}`}>
     <div ref={host} className="map-view__canvas" aria-label="Mapa interactivo" />
     <div className="map-action-controls" aria-label="Controles de mapa">
       <button type="button" className="map-theme-toggle" data-theme={theme} onClick={switchTheme} aria-label="Cambiar tema del mapa" title={theme === "positron" ? "Mapa con más color" : theme === "voyager" ? "Mapa oscuro" : "Mapa claro"}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Zm-8 9 8 4.5 8-4.5M4 16.5 12 21l8-4.5" /></svg></button>
-      {(focusLost || showFocusControl) && <button type="button" className="map-focus-control" onClick={focusMap} aria-label="Centrar el foco del mapa" title="Centrar mapa"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg></button>}
+      {(focusLost || showFocusControl || (followNavigation && followPaused)) && <button type="button" className={`map-focus-control${followNavigation ? " map-focus-control--follow" : ""}`} onClick={focusMap} aria-label={followNavigation ? "Reanudar seguimiento de navegación" : "Centrar el foco del mapa"} title={followNavigation ? "Reanudar seguimiento" : "Centrar mapa"}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg></button>}
     </div>
     <div className="map-navigation-controls" aria-label="Navegación del mapa">
       <button type="button" onClick={() => changeZoom(1)} aria-label="Acercar mapa" title="Acercar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
