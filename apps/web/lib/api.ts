@@ -5,9 +5,23 @@ export type Session = {
   user: { id: string; name: string; email: string; role: "CLIENT" | "RIDER" | "ADMIN" };
 };
 export type ApiError = Error & { status?: number; code?: string };
+export type ApiRequestOptions = RequestInit & { retryOnNetwork?: boolean };
 
 let session: Session | null = null;
 let refreshInFlight: Promise<Session | null> | null = null;
+
+const pause = (milliseconds: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, milliseconds));
+const transientStatus = (status: number) => [502, 503, 504].includes(status);
+
+const unavailable = (): ApiError => {
+  const error = new Error("No pudimos conectarnos con MotoYa. Verifica tu conexión e inténtalo de nuevo.") as ApiError;
+  error.name = "ApiError";
+  error.code = "NETWORK_UNAVAILABLE";
+  return error;
+};
+
+export const isNetworkUnavailable = (error: unknown): error is ApiError =>
+  Boolean(error && typeof error === "object" && "code" in error && (error as ApiError).code === "NETWORK_UNAVAILABLE");
 
 export const getSession = (): Session | null => session;
 
@@ -19,17 +33,36 @@ export const setSession = (nextSession: Session, _remember?: boolean): void => {
 export async function restoreSession(): Promise<Session | null> {
   if (session) return session;
   if (!refreshInFlight) {
-    refreshInFlight = fetch(`${base}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    }).then(async (response) => {
-      if (!response.ok) return null;
-      const nextSession = await response.json() as Session;
-      session = nextSession;
-      return nextSession;
-    }).catch(() => null).finally(() => { refreshInFlight = null; });
+    refreshInFlight = (async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await fetch(`${base}/auth/refresh`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (transientStatus(response.status)) {
+            if (attempt === 0) {
+              await pause(700);
+              continue;
+            }
+            throw unavailable();
+          }
+          if (!response.ok) return null;
+          const nextSession = await response.json() as Session;
+          session = nextSession;
+          return nextSession;
+        } catch {
+          if (attempt === 0) {
+            await pause(700);
+            continue;
+          }
+          throw unavailable();
+        }
+      }
+      return null;
+    })().finally(() => { refreshInFlight = null; });
   }
   return refreshInFlight;
 }
@@ -57,20 +90,31 @@ const headersFor = (current: Session | null, headers?: HeadersInit) => ({
   ...headers,
 });
 
-export async function api<T>(path: string, options: RequestInit = {}) {
+export async function api<T>(path: string, options: ApiRequestOptions = {}) {
+  const { retryOnNetwork = false, ...requestOptions } = options;
+  const method = (requestOptions.method || "GET").toUpperCase();
+  // Retriable reads do not change state. POST/PUT/PATCH requests stay as a
+  // single attempt unless the caller explicitly marks an operation as safe.
+  const attempts = retryOnNetwork || method === "GET" || method === "HEAD" ? 3 : 1;
   const request = async (current: Session | null) => {
-    try {
-      return await fetch(base + path, {
-        ...options,
-        credentials: "include",
-        headers: headersFor(current, options.headers),
-      });
-    } catch {
-      const error = new Error("No pudimos conectarnos con MotoYa. Reintentaremos al recuperar la conexión.") as ApiError;
-      error.name = "ApiError";
-      error.code = "NETWORK_UNAVAILABLE";
-      throw error;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const response = await fetch(base + path, {
+          ...requestOptions,
+          credentials: "include",
+          headers: headersFor(current, requestOptions.headers),
+        });
+        if (transientStatus(response.status) && attempt + 1 < attempts) {
+          await pause(500 * (attempt + 1));
+          continue;
+        }
+        return response;
+      } catch {
+        if (attempt + 1 < attempts) await pause(500 * (attempt + 1));
+        else throw unavailable();
+      }
     }
+    throw unavailable();
   };
 
   let current = getSession();

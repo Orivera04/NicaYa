@@ -6,7 +6,7 @@ import { Guard } from "@/components/Guard";
 import { LocationSearch } from "@/components/LocationSearch";
 import { MapPoint, MapView } from "@/components/MapView";
 import { MobileAppShell } from "@/components/MobileAppShell";
-import { api, getSession } from "@/lib/api";
+import { api, getSession, isNetworkUnavailable } from "@/lib/api";
 import { mergeTrackingPoints, newestTrackingPoint, TRACKING_HISTORY_LIMIT, trackingPointFromEvent, type TripTrackingEvent, type TripTrackingPoint } from "@/lib/trip-tracking";
 
 type Place = MapPoint & { address: string; reference?: string | null };
@@ -147,7 +147,9 @@ export default function ClientPage() {
         setTripInfoExpanded(true);
         setStage(current.status === "REQUESTED" ? "SEARCHING" : "TRACKING");
       }
-    } catch (error) { setMessage((error as Error).message); }
+    } catch (error) {
+      if (!isNetworkUnavailable(error)) setMessage((error as Error).message);
+    }
   };
   useEffect(() => { void load(); locate(); }, []);
   useEffect(() => {
@@ -190,7 +192,7 @@ export default function ClientPage() {
   const getQuote = async () => {
     if (!destination) return setMessage("Primero selecciona un destino.");
     setBusy(true); setMessage("");
-    try { setQuote(await api<Quote>("/trips/estimate", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO" }) })); setStage("QUOTE"); }
+    try { setQuote(await api<Quote>("/trips/estimate", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO" }), retryOnNetwork: true })); setStage("QUOTE"); }
     catch (error) { setMessage((error as Error).message); }
     finally { setBusy(false); }
   };

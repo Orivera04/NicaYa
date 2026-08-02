@@ -30,6 +30,7 @@ export default function RegisterPage() {
 
   const submit = async (form: FormData) => {
     setLoading(true);
+    setError("");
     try {
       const session = await api<Session>(`/auth/register/${role.toLowerCase()}`, { method: "POST", body: JSON.stringify(Object.fromEntries(form.entries())) });
       setSession(session);

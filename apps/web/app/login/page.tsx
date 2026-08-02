@@ -17,6 +17,7 @@ export default function LoginPage() {
   async function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (!formRef.current) return;
+    if (loading) return;
 
     setLoading(true);
     setError("");
@@ -86,7 +87,7 @@ export default function LoginPage() {
           <form
             className="mt-7 space-y-4 rounded-3xl border border-white/10 bg-white/5 p-5 shadow-[0_20px_55px_rgba(0,0,0,.28)]"
             ref={formRef}
-            onSubmit={(event) => event.preventDefault()}
+            onSubmit={submit}
           >
             <label className="block text-sm font-semibold">Correo
               <div className="relative mt-1">
@@ -108,7 +109,7 @@ export default function LoginPage() {
               Recordarme en este dispositivo
             </label>
             {error ? <p className="rounded-xl bg-red-500/15 p-3 text-sm text-red-200" role="alert">{error}</p> : null}
-            <button className="login-cta w-full" disabled={loading} onClick={() => submit()} type="button">
+            <button className="login-cta w-full" disabled={loading} type="submit">
               <span>{loading ? "Ingresando..." : "Entrar a MotoYa"}</span><span aria-hidden="true">&rarr;</span>
             </button>
           </form>
