@@ -100,7 +100,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
-  const [matchedTrail, setMatchedTrail] = useState<{ tripKey: string; segments: MapPoint[][] }>({ tripKey: "", segments: [] });
+  const [matchedTrail, setMatchedTrail] = useState<{ tripKey: string; segments: MapPoint[][]; sourceLast?: MapPoint }>({ tripKey: "", segments: [] });
   const [theme, setTheme] = useState<MapTheme>("positron");
   const [focusLost, setFocusLost] = useState(false);
   const matchRequest = useRef({ tripKey: "", at: 0 });
@@ -185,7 +185,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     const timer = window.setTimeout(() => {
       matchRequest.current = { tripKey, at: Date.now() };
       api<{ segments: MapPoint[][] }>("/routing/match", { method: "POST", body: JSON.stringify({ points: matchingPoints }) })
-        .then(({ segments }) => { if (active) setMatchedTrail({ tripKey, segments }); })
+        .then(({ segments }) => { if (active) setMatchedTrail({ tripKey, segments, sourceLast: matchingPoints.at(-1) }); })
         // A map-match failure must never remove a confirmed GPS trace. The
         // renderer will keep the raw, ordered fallback until the next match.
         .catch(() => undefined);
@@ -242,7 +242,32 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // segments, preventing MapLibre from connecting a GPS gap with a false
     // diagonal. Until then the ordered raw history remains the safe fallback.
     const matchedSegments = matchedTrail.tripKey === tripKey ? matchedTrail.segments : [];
-    const roadFollowingTrail = matchedSegments.length ? matchedSegments.flat() : renderedTrail;
+    // A road-match response is always a few seconds behind the live GPS. Keep
+    // its confirmed street geometry, then append the short local tail that has
+    // arrived since that response. This gives the rider and client immediate
+    // visual movement without pretending an old route is the rider's path.
+    const matchedEndpoint = matchedSegments.at(-1)?.at(-1);
+    const lastMatchedInput = matchedTrail.tripKey === tripKey ? matchedTrail.sourceLast : undefined;
+    const matchedInputIndex = lastMatchedInput
+      ? renderedTrail.findLastIndex((point) => distanceMeters(point, lastMatchedInput) <= 14)
+      : -1;
+    const unmatchedTail = matchedInputIndex >= 0
+      ? renderedTrail.slice(matchedInputIndex + 1)
+      : [];
+    const liveTail = (() => {
+      if (!matchedEndpoint) return unmatchedTail;
+      if (unmatchedTail.length >= 2) return unmatchedTail;
+      const livePoint = renderedTrail.at(-1);
+      // A direct connector is only safe for the last few metres between a
+      // matched road point and the current GPS marker. Large gaps stay split.
+      return livePoint && distanceMeters(matchedEndpoint, livePoint) > 2 && distanceMeters(matchedEndpoint, livePoint) <= 100
+        ? [matchedEndpoint, livePoint]
+        : unmatchedTail;
+    })();
+    const displayedTrailSegments = matchedSegments.length
+      ? [...matchedSegments, ...(liveTail.length >= 2 ? [liveTail] : [])]
+      : (renderedTrail.length >= 2 ? [renderedTrail] : []);
+    const roadFollowingTrail = displayedTrailSegments.flat();
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
     const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
@@ -293,8 +318,8 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // El azul es la bitácora GPS real, no el "progreso" inferido sobre una ruta
     // sugerida. Así, si el rider toma otro camino, se dibuja exactamente ese
     // camino y ninguna calle de la guía se marca como completada.
-    const traveledData = (matchedSegments.length
-      ? { type: "Feature" as const, properties: {}, geometry: { type: "MultiLineString" as const, coordinates: matchedSegments.map((segment) => segment.map((point) => [point.lng, point.lat] as [number, number])) } }
+    const traveledData = (displayedTrailSegments.length > 1
+      ? { type: "Feature" as const, properties: {}, geometry: { type: "MultiLineString" as const, coordinates: displayedTrailSegments.map((segment) => segment.map((point) => [point.lng, point.lat] as [number, number])) } }
       : { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: roadFollowingTrail.map((point) => [point.lng, point.lat] as [number, number]) } }) as never;
     const traveledSource = instance.getSource("motoya-traveled-route") as GeoJSONSource | undefined;
     if (traveledSource) traveledSource.setData(traveledData);
