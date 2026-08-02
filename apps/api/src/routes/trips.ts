@@ -33,7 +33,7 @@ tripsRouter.post("/:id/offers",authorize("RIDER"),async(req,res)=>{const amount=
 tripsRouter.get("/:id/offers",authorize("CLIENT"),async(req,res)=>{const trip=await prisma.trip.findUnique({where:{id:req.params.id}});if(!trip||trip.clientId!==req.user!.id)fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");res.json(await prisma.tripOffer.findMany({where:{tripId:req.params.id,status:"PENDING",expiresAt:{gt:new Date()}},include:{rider:{select:{id:true,name:true}},},orderBy:{createdAt:"desc"}}));});
 tripsRouter.post("/:id/offers/:offerId/accept",authorize("CLIENT"),async(req,res)=>{const trip=await acceptOffer(req.params.id,req.params.offerId,req.user!.id);req.app.get("io")?.to(`user:${trip.riderId}`).emit("trip:accepted",trip);res.json(trip);});
 tripsRouter.post("/:id/offers/:offerId/reject",authorize("CLIENT"),async(req,res)=>{res.json(await rejectOffer(req.params.id,req.params.offerId,req.user!.id));});
-const tripLocationSchema=z.object({lat:z.number().finite().min(-90).max(90),lng:z.number().finite().min(-180).max(180),accuracy:z.number().finite().min(0).max(5000).optional(),heading:z.number().finite().min(0).max(360).optional()});
+const tripLocationSchema=z.object({lat:z.number().finite().min(-90).max(90),lng:z.number().finite().min(-180).max(180),accuracy:z.number().finite().min(0).max(5000).optional(),heading:z.number().finite().min(0).max(360).optional(),capturedAt:z.string().datetime().optional()});
 const emitTrackingUpdate=(io:Server|undefined,update:{tripId:string;clientId:string;riderId:string})=>{
   // The same persisted event reaches both participants. A reconnect always
   // recovers its ordered source of truth through GET /trips/:id.

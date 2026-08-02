@@ -58,11 +58,20 @@ const headersFor = (current: Session | null, headers?: HeadersInit) => ({
 });
 
 export async function api<T>(path: string, options: RequestInit = {}) {
-  const request = (current: Session | null) => fetch(base + path, {
-    ...options,
-    credentials: "include",
-    headers: headersFor(current, options.headers),
-  });
+  const request = async (current: Session | null) => {
+    try {
+      return await fetch(base + path, {
+        ...options,
+        credentials: "include",
+        headers: headersFor(current, options.headers),
+      });
+    } catch {
+      const error = new Error("No pudimos conectarnos con MotoYa. Reintentaremos al recuperar la conexión.") as ApiError;
+      error.name = "ApiError";
+      error.code = "NETWORK_UNAVAILABLE";
+      throw error;
+    }
+  };
 
   let current = getSession();
   let response = await request(current);

@@ -6,7 +6,7 @@ import { getSettings } from "./settings.service.js";
 import { assertRiderCanOperate } from "./subscription.service.js";
 import { Prisma, TripStatus } from "@prisma/client";
 
-type TrackingLocationInput={lat:number;lng:number;accuracy?:number;heading?:number};
+type TrackingLocationInput={lat:number;lng:number;accuracy?:number;heading?:number;capturedAt?:string};
 export type TripTrackingUpdate={tripId:string;clientId:string;riderId:string;locationId:string;lat:number;lng:number;accuracy:number|null;heading:number|null;recordedAt:string};
 
 const toTrackingUpdate=(trip:{id:string;clientId:string;riderId:string|null},location:{id:string;lat:number;lng:number;accuracy:number|null;heading:number|null;createdAt:Date}):TripTrackingUpdate=>({
@@ -21,6 +21,16 @@ const toTrackingUpdate=(trip:{id:string;clientId:string;riderId:string|null},loc
   recordedAt:location.createdAt.toISOString(),
 });
 
+// Browser GPS reports the instant at which a coordinate was sampled. Preserve
+// it for chronological rendering, but never trust an arbitrarily old/future
+// device clock as the server source of truth.
+const normalizeCapturedAt=(value?:string)=>{
+  const now=new Date();
+  const candidate=value?new Date(value):now;
+  const timestamp=candidate.getTime();
+  return Number.isFinite(timestamp)&&timestamp>=now.getTime()-10*60_000&&timestamp<=now.getTime()+45_000?candidate:now;
+};
+
 /**
  * Persists exactly the point that will be broadcast to both trip participants.
  * Socket.io is deliberately only a notification channel; reconnecting clients
@@ -34,9 +44,9 @@ export async function recordTripLocation(tripId:string,riderId:string,location:T
     if(activeTrip.riderId!==riderId) return fail(403,"FORBIDDEN","No puedes actualizar la ubicación de este viaje.");
     if(!["ACCEPTED","RIDER_ON_THE_WAY","RIDER_ARRIVED","IN_PROGRESS"].includes(activeTrip.status)) return fail(409,"TRIP_NOT_ACTIVE","El viaje ya no acepta ubicaciones.");
 
-    const recordedAt=new Date();
+    const recordedAt=normalizeCapturedAt(location.capturedAt);
     await tx.trip.update({where:{id:activeTrip.id},data:{riderLat:location.lat,riderLng:location.lng,riderAccuracy:location.accuracy??null,riderHeading:location.heading??null,riderLocationUpdatedAt:recordedAt}});
-    const persisted=await tx.tripLocation.create({data:{tripId:activeTrip.id,...location,createdAt:recordedAt}});
+    const persisted=await tx.tripLocation.create({data:{tripId:activeTrip.id,lat:location.lat,lng:location.lng,accuracy:location.accuracy,heading:location.heading,createdAt:recordedAt}});
     return toTrackingUpdate(activeTrip,persisted);
   });
 }
@@ -76,9 +86,9 @@ export async function boardPassenger(tripId:string,riderId:string,location?:Trac
     if(meters>pickupRadiusMeters) fail(409,"TOO_FAR_FROM_PICKUP",`Acércate al pasajero. Debes estar a menos de ${pickupRadiusMeters} m; estás a ${Math.ceil(meters)} m.`);
     let trackingLocation:TripTrackingUpdate|null=null;
     if(location){
-      const recordedAt=new Date();
+      const recordedAt=normalizeCapturedAt(location.capturedAt);
       await tx.trip.update({where:{id:tripId},data:{riderLat:location.lat,riderLng:location.lng,riderAccuracy:location.accuracy??null,riderHeading:location.heading??null,riderLocationUpdatedAt:recordedAt}});
-      const persisted=await tx.tripLocation.create({data:{tripId,...location,createdAt:recordedAt}});
+      const persisted=await tx.tripLocation.create({data:{tripId,lat:location.lat,lng:location.lng,accuracy:location.accuracy,heading:location.heading,createdAt:recordedAt}});
       trackingLocation=toTrackingUpdate(trip,persisted);
     }
     const updated=await tx.trip.updateMany({where:{id:tripId,riderId,status:"RIDER_ON_THE_WAY"},data:{status:"IN_PROGRESS"}});

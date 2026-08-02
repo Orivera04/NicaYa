@@ -15,6 +15,9 @@ const schema = z.object({
   COOKIE_SECURE: z.enum(["true", "false"]).optional(),
   COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
   FILE_ENCRYPTION_KEY: z.string().min(32).optional(),
+  // Kept configurable so production can move to a managed routing provider
+  // without touching the trip or map clients.
+  ROUTING_PROVIDER_URL: z.string().url().default("https://router.project-osrm.org"),
   // A compact image keeps the full 8-image rider dossier below the JSON body limit.
   MEDIA_MAX_IMAGE_BYTES: z.coerce.number().int().positive().max(1_000_000).default(350_000),
 });

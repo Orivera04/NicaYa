@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 import { getMapTileUrls, MAP_TILE_THEMES, type MapTheme } from "@/config/map.config";
-import { getSession } from "@/lib/api";
+import { api, getSession } from "@/lib/api";
 
-export type MapPoint = { lat: number; lng: number; label?: string; heading?: number; accuracy?: number };
+export type MapPoint = { lat: number; lng: number; label?: string; heading?: number; accuracy?: number; capturedAt?: string };
 type RequestMarker = MapPoint & { id: string; title: string; subtitle?: string };
 type FitPadding = { top: number; right: number; bottom: number; left: number };
 type Props = { origin?: MapPoint; destination?: MapPoint; rider?: MapPoint; riderConnected?: boolean; riderWithPassenger?: boolean; passengerLoading?: boolean; routeFrom?: MapPoint; routeTo?: MapPoint; traveledPath?: MapPoint[]; startFlag?: MapPoint; pickupFlag?: MapPoint; focus?: MapPoint; recenterVersion?: number; requests?: RequestMarker[]; fitPadding?: FitPadding; onPick?: (point: MapPoint) => void; onOriginMove?: (point: MapPoint) => void; onDestinationMove?: (point: MapPoint) => void; onOriginClick?: () => void; onDestinationClick?: () => void; onRequestClick?: (id: string) => void; showFocusControl?: boolean; className?: string };
@@ -58,6 +58,18 @@ const closestRoutePoint = (points: MapPoint[], point?: MapPoint) => {
 // de un límite seguro para evitar "saltar" de una calle a otra.
 const routeSnapTolerance = (point?: MapPoint) => Math.max(28, Math.min(70, 20 + (point?.accuracy || 0)));
 const renderedPathPointLimit = 720;
+const matchedPathPointLimit = 90;
+const trackingTimestamp = (point: MapPoint) => {
+  const value = point.capturedAt ? Date.parse(point.capturedAt) : Number.NaN;
+  return Number.isFinite(value) ? value : 0;
+};
+const compactTrailForMatching = (points: MapPoint[]) => {
+  const ordered = [...points]
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng) && (!point.accuracy || point.accuracy <= 120))
+    .sort((left, right) => trackingTimestamp(left) - trackingTimestamp(right));
+  const compact = ordered.filter((point, index, list) => index === 0 || index === list.length - 1 || distanceMeters(list[index - 1], point) >= 5);
+  return compact.slice(-matchedPathPointLimit);
+};
 const markerSvg = (kind: "rider" | "riderWithPassenger" | "passenger" | "destination" | "start" | "pickup" | "request", heading?: number, riderConnected = false, loading = false) => {
   const color = kind === "rider" || kind === "riderWithPassenger" ? "#2563eb" : kind === "passenger" ? "#a855f7" : kind === "destination" ? "#f97316" : kind === "start" ? "#0f766e" : kind === "pickup" ? "#16a34a" : "#7c3aed";
   const isRider = kind === "rider" || kind === "riderWithPassenger";
@@ -88,8 +100,10 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState(false);
   const [routeUnavailable, setRouteUnavailable] = useState(false);
+  const [matchedTrail, setMatchedTrail] = useState<{ tripKey: string; segments: MapPoint[][] }>({ tripKey: "", segments: [] });
   const [theme, setTheme] = useState<MapTheme>("positron");
   const [focusLost, setFocusLost] = useState(false);
+  const matchRequest = useRef({ tripKey: "", at: 0 });
   const themeRef = useRef(theme);
   themeRef.current = theme;
   const props = useRef({ origin, destination, rider, riderConnected, riderWithPassenger, passengerLoading, routeFrom, routeTo, traveledPath, startFlag, pickupFlag, focus, requests, onPick, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick });
@@ -103,16 +117,17 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
   // rider no necesariamente había transitado.
   const mainRouteKey = routeKey(routeStart, routeEnd);
   const renderedRoute = route.key === mainRouteKey ? route.points : [];
+  const matchingPoints = useMemo(() => compactTrailForMatching(traveledPath), [traveledPath]);
+  const matchingKey = useMemo(() => matchingPoints.map((point) => `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`).join(";"), [matchingPoints]);
   useEffect(() => {
     const from = routeStart; const to = routeEnd;
     const key = routeKey(from, to);
     if (!key || !from || !to) { setRoute({ key: "", points: [] }); setRouteUnavailable(false); return; }
-    let live = true; const controller = new AbortController();
-    fetch(`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Route unavailable")))
-      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => { const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || []; if (live) { setRoute({ key, points }); setRouteUnavailable(points.length < 2); } })
+    let live = true;
+    api<{ points: MapPoint[] }>("/routing/route", { method: "POST", body: JSON.stringify({ from, to }) })
+      .then((data) => { const points = data.points || []; if (live) { setRoute({ key, points }); setRouteUnavailable(points.length < 2); } })
       .catch(() => { if (live) { setRoute({ key, points: [] }); setRouteUnavailable(true); } });
-    return () => { live = false; controller.abort(); };
+    return () => { live = false; };
   }, [routeStart?.lat, routeStart?.lng, routeEnd?.lat, routeEnd?.lng]);
 
   // Si el GPS se sale de la geometría planeada no sustituimos la ruta original:
@@ -142,11 +157,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
 
     rerouteRequest.current = { key, at: now, from: { ...liveRider } };
     let active = true;
-    const controller = new AbortController();
-    fetch(`https://router.project-osrm.org/route/v1/driving/${liveRider.lng},${liveRider.lat};${target.lng},${target.lat}?overview=full&geometries=geojson&steps=false`, { signal: controller.signal })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Reroute unavailable")))
-      .then((data: { routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> }) => {
-        const points = data.routes?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({ lat, lng })) || [];
+    api<{ points: MapPoint[] }>("/routing/route", { method: "POST", body: JSON.stringify({ from: liveRider, to: target }) })
+      .then((data) => {
+        const points = data.points || [];
         if (active) setReroute({ key, points });
       })
       .catch(() => {
@@ -154,8 +167,31 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
         // externo no pueda recalcular temporalmente.
         if (active) setReroute((current) => current.key === key ? { key: "", points: [] } : current);
       });
-    return () => { active = false; controller.abort(); };
+    return () => { active = false; };
   }, [rider?.lat, rider?.lng, rider?.accuracy, routeEnd?.lat, routeEnd?.lng, mainRouteKey, renderedRoute]);
+
+  // The provider snaps only persisted, ordered GPS readings. The rider marker
+  // still moves immediately from Socket/GPS data, while the blue journal is
+  // redrawn from real streets every few seconds for both participants.
+  useEffect(() => {
+    const tripKey = `${origin?.lat.toFixed(5) || ""},${origin?.lng.toFixed(5) || ""}:${destination?.lat.toFixed(5) || ""},${destination?.lng.toFixed(5) || ""}`;
+    if (!tripKey || matchingPoints.length < 2) {
+      setMatchedTrail((current) => current.tripKey ? { tripKey: "", segments: [] } : current);
+      return;
+    }
+    const previous = matchRequest.current;
+    const delay = Math.max(0, 4_000 - (Date.now() - previous.at));
+    let active = true;
+    const timer = window.setTimeout(() => {
+      matchRequest.current = { tripKey, at: Date.now() };
+      api<{ segments: MapPoint[][] }>("/routing/match", { method: "POST", body: JSON.stringify({ points: matchingPoints }) })
+        .then(({ segments }) => { if (active) setMatchedTrail({ tripKey, segments }); })
+        // A map-match failure must never remove a confirmed GPS trace. The
+        // renderer will keep the raw, ordered fallback until the next match.
+        .catch(() => undefined);
+    }, delay);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, matchingKey]);
 
   const render = () => {
     const instance = map.current; const lib = runtime.current;
@@ -201,10 +237,12 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
 
       return [...persistedTrail, ...tail].filter((point, index, trail) => index === 0 || distanceMeters(trail[index - 1], point) >= 3).slice(-renderedPathPointLimit);
     })();
-    // The blue trace is the ordered GPS journal, not an asynchronous map-match
-    // approximation. It therefore moves immediately and remains identical for
-    // the rider and passenger, including when the rider leaves the suggestion.
-    const roadFollowingTrail = renderedTrail;
+    // The blue trace comes from the same persisted GPS journal for client and
+    // rider. When a match is available we draw it as independent street
+    // segments, preventing MapLibre from connecting a GPS gap with a false
+    // diagonal. Until then the ordered raw history remains the safe fallback.
+    const matchedSegments = matchedTrail.tripKey === tripKey ? matchedTrail.segments : [];
+    const roadFollowingTrail = matchedSegments.length ? matchedSegments.flat() : renderedTrail;
     const plannedTo = current.routeTo || current.destination;
     const routeGoesToDestination = Boolean(plannedTo && current.destination && plannedTo.lat === current.destination.lat && plannedTo.lng === current.destination.lng);
     const routeGoesToPickup = Boolean(plannedTo && current.origin && plannedTo.lat === current.origin.lat && plannedTo.lng === current.origin.lng);
@@ -255,7 +293,9 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     // El azul es la bitácora GPS real, no el "progreso" inferido sobre una ruta
     // sugerida. Así, si el rider toma otro camino, se dibuja exactamente ese
     // camino y ninguna calle de la guía se marca como completada.
-    const traveledData = { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: roadFollowingTrail.map((point) => [point.lng, point.lat]) } };
+    const traveledData = (matchedSegments.length
+      ? { type: "Feature" as const, properties: {}, geometry: { type: "MultiLineString" as const, coordinates: matchedSegments.map((segment) => segment.map((point) => [point.lng, point.lat] as [number, number])) } }
+      : { type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: roadFollowingTrail.map((point) => [point.lng, point.lat] as [number, number]) } }) as never;
     const traveledSource = instance.getSource("motoya-traveled-route") as GeoJSONSource | undefined;
     if (traveledSource) traveledSource.setData(traveledData);
     else {
@@ -373,7 +413,7 @@ export function MapView({ origin, destination, rider, riderConnected = false, ri
     render();
     const key = focus ? `${focus.lat.toFixed(6)},${focus.lng.toFixed(6)}:${recenterVersion}` : "";
     if (map.current && focus && (renderedRoute.length < 2 || recenterVersion > 0) && key !== lastFocus.current) { map.current.flyTo({ center: [focus.lng, focus.lat], zoom: 15, essential: true }); lastFocus.current = key; }
-  }, [origin, destination, rider, riderWithPassenger, passengerLoading, routeFrom, routeTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, reroute, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
+  }, [origin, destination, rider, riderWithPassenger, passengerLoading, routeFrom, routeTo, traveledPath, startFlag, pickupFlag, focus, recenterVersion, requests, route, reroute, matchedTrail, onOriginMove, onDestinationMove, onOriginClick, onDestinationClick, onRequestClick]);
   const retryMap = () => {
     if (!map.current) return;
     setLoading(true);

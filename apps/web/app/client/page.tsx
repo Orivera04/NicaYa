@@ -33,6 +33,7 @@ const toTripTrail = (trip: ActiveTrip): MapPoint[] => (trip.locations || []).map
   lng: point.lng,
   heading: point.heading ?? undefined,
   accuracy: point.accuracy ?? undefined,
+  capturedAt: point.createdAt,
 }));
 
 const latestTripLocation = (trip: ActiveTrip): LiveLocation | null => {
