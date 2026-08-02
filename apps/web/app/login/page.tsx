@@ -25,6 +25,10 @@ export default function LoginPage() {
       const form = new FormData(formRef.current);
       const session = await api<Session>("/auth/login", {
         method: "POST",
+        // Render can wake an inactive API on the first request. Login is safe
+        // to retry only for a transport/gateway failure; credentials are never
+        // retried after a normal API response.
+        retryOnNetwork: true,
         body: JSON.stringify({ email: form.get("email"), password: form.get("password"), remember }),
       });
       setSession(session, remember);

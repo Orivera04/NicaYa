@@ -1,4 +1,6 @@
-const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+// Keep API calls first-party. The Next rewrite forwards this path to the API
+// and lets HttpOnly refresh cookies work reliably on mobile browsers.
+const base = "/api";
 
 export type Session = {
   accessToken: string;
@@ -95,7 +97,7 @@ export async function api<T>(path: string, options: ApiRequestOptions = {}) {
   const method = (requestOptions.method || "GET").toUpperCase();
   // Retriable reads do not change state. POST/PUT/PATCH requests stay as a
   // single attempt unless the caller explicitly marks an operation as safe.
-  const attempts = retryOnNetwork || method === "GET" || method === "HEAD" ? 3 : 1;
+  const attempts = retryOnNetwork || method === "GET" || method === "HEAD" ? 4 : 1;
   const request = async (current: Session | null) => {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {

@@ -2,6 +2,7 @@ import type { CookieOptions, Request, Response } from "express";
 import { Role } from "@prisma/client";
 import { loginSchema, registerSchema } from "@motoya/shared";
 import { z } from "zod";
+import rateLimit from "express-rate-limit";
 import { env } from "../config.js";
 import { prisma } from "../db.js";
 import { hashPassword, hashToken, makeTokens, readRefresh, verifyPassword } from "../lib/auth.js";
@@ -10,6 +11,17 @@ import { authenticate } from "../middleware/auth.js";
 import { safeRouter } from "../middleware/safe-router.js";
 
 export const authRouter = safeRouter();
+
+// Refresh is intentionally excluded. A missing/expired cookie is a normal
+// session state and must not consume the login-attempt budget.
+const credentialLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ error: { code: "AUTH_RATE_LIMITED", message: "Demasiados intentos. Espera unos minutos antes de volver a intentarlo." } }),
+});
 
 const refreshLifetimeMs = 7 * 24 * 60 * 60 * 1_000;
 const rememberCookieName = `${env.COOKIE_NAME}_remember`;
@@ -68,10 +80,10 @@ async function register(role: Role, body: unknown) {
   }, { isolationLevel: "Serializable" });
 }
 
-authRouter.post("/register/client", async (req, res) => sendSession(res.status(201), await register("CLIENT", req.body), false));
-authRouter.post("/register/rider", async (req, res) => sendSession(res.status(201), await register("RIDER", req.body), false));
+authRouter.post("/register/client", credentialLimiter, async (req, res) => sendSession(res.status(201), await register("CLIENT", req.body), false));
+authRouter.post("/register/rider", credentialLimiter, async (req, res) => sendSession(res.status(201), await register("RIDER", req.body), false));
 
-authRouter.post("/login", async (req, res) => {
+authRouter.post("/login", credentialLimiter, async (req, res) => {
   const data = loginSchema.extend({ remember: z.boolean().optional() }).parse(req.body);
   const user = await prisma.user.findUnique({ where: { email: data.email } });
   if (!user || !(await verifyPassword(data.password, user.passwordHash))) {
