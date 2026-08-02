@@ -7,6 +7,7 @@ import { LocationSearch } from "@/components/LocationSearch";
 import { MapPoint, MapView } from "@/components/MapView";
 import { MobileAppShell } from "@/components/MobileAppShell";
 import { api, getSession, isNetworkUnavailable } from "@/lib/api";
+import { proposedFareError } from "@/lib/trip-pricing";
 import { mergeTrackingPoints, newestTrackingPoint, TRACKING_HISTORY_LIMIT, trackingPointFromEvent, type TripTrackingEvent, type TripTrackingPoint } from "@/lib/trip-tracking";
 
 type Place = MapPoint & { address: string; reference?: string | null };
@@ -197,9 +198,19 @@ export default function ClientPage() {
     finally { setBusy(false); }
   };
   const validAmount = useMemo(() => proposedPrice ? Number(proposedPrice) : undefined, [proposedPrice]);
+  const continueToReview = () => {
+    const error = quote ? proposedFareError(validAmount, quote) : null;
+    if (error) {
+      setMessage(error);
+      return;
+    }
+    setMessage("");
+    setStage("REVIEW");
+  };
   const publish = async () => {
     if (!destination || !quote) return;
-    if (validAmount !== undefined && (!Number.isFinite(validAmount) || validAmount < quote.minimumFare || validAmount > quote.maximumFare)) return setMessage(`Tu propuesta debe estar entre ${quote.minimumFare} y ${quote.maximumFare} ${quote.currency}.`);
+    const error = proposedFareError(validAmount, quote);
+    if (error) return setMessage(error);
     setBusy(true); setMessage("");
     try {
       const trip = await api<{ id: string }>("/trips", { method: "POST", body: JSON.stringify({ origin, destination, serviceCode: "MOTO", proposedPrice: validAmount }) });
@@ -278,7 +289,7 @@ export default function ClientPage() {
       {favorites.length > 0 && <section className="quick-destinations"><p>Destinos guardados</p><div>{favorites.slice(0, 4).map((place) => <button key={place.id} onClick={() => selectFavorite(place)}><b>{place.label}</b><span>{place.address}</span></button>)}</div></section>}
       <button className="trip-main-action" disabled={!destination || busy} onClick={getQuote}>{busy ? "Calculando…" : "Ver tarifa de Moto"}<span>→</span></button></>}
 
-    {stage === "QUOTE" && quote && <><section className="flow-page-title"><button onClick={() => setStage("ROUTE")}>←</button><div><p>VIAJE MOTO</p><h1>Elige cómo pagar</h1></div></section><section className="relative mt-3"><MapView origin={origin} destination={destination || undefined} focus={destination || origin} /><div className="route-summary"><span>{origin.address}</span><i>↓</i><b>{destination?.address}</b></div></section><section className="moto-service-card"><div><p>MOTO · 1 PASAJERO</p><h2>Viaje estimado</h2><span>{quote.distanceKm.toFixed(1)} km · {quote.estimatedDurationMin} min</span></div><strong>{quote.currency} {quote.estimatedPrice}</strong></section><section className="offer-choice"><div><b>Tarifa calculada</b><span>Usar {quote.currency} {quote.estimatedPrice}</span><button className={!proposedPrice ? "chosen" : ""} onClick={() => setProposedPrice("")}>Seleccionar</button></div><div><b>Proponer mi tarifa</b><span>Entre {quote.currency} {quote.minimumFare} y {quote.maximumFare}</span><input type="number" value={proposedPrice} min={quote.minimumFare} max={quote.maximumFare} onChange={(event) => setProposedPrice(event.target.value)} placeholder="Ingresa tu monto" /></div></section><button className="trip-main-action" onClick={() => setStage("REVIEW")}>Continuar con {quote.currency} {price}<span>→</span></button></>}
+    {stage === "QUOTE" && quote && <><section className="flow-page-title"><button onClick={() => setStage("ROUTE")}>←</button><div><p>VIAJE MOTO</p><h1>Elige cómo pagar</h1></div></section><section className="relative mt-3"><MapView origin={origin} destination={destination || undefined} focus={destination || origin} /><div className="route-summary"><span>{origin.address}</span><i>↓</i><b>{destination?.address}</b></div></section><section className="moto-service-card"><div><p>MOTO · 1 PASAJERO</p><h2>Viaje estimado</h2><span>{quote.distanceKm.toFixed(1)} km · {quote.estimatedDurationMin} min</span></div><strong>{quote.currency} {quote.estimatedPrice}</strong></section><section className="offer-choice"><div><b>Tarifa calculada</b><span>Usar {quote.currency} {quote.estimatedPrice}</span><button className={!proposedPrice ? "chosen" : ""} onClick={() => setProposedPrice("")}>Seleccionar</button></div><div><b>Proponer mi tarifa</b><span>Entre {quote.currency} {quote.minimumFare} y {quote.maximumFare}</span><input type="number" value={proposedPrice} min={quote.minimumFare} max={quote.maximumFare} onChange={(event) => setProposedPrice(event.target.value)} placeholder="Ingresa tu monto" /></div></section><button className="trip-main-action" onClick={continueToReview}>Continuar con {quote.currency} {price}<span>→</span></button></>}
 
     {stage === "REVIEW" && quote && <><section className="flow-page-title"><button onClick={() => setStage("QUOTE")}>←</button><div><p>CONFIRMACIÓN</p><h1>Revisa tu viaje</h1></div></section><section className="confirmation-card"><div className="confirmation-route"><span>Origen</span><b>{origin.address}</b><i>↓</i><span>Destino</span><b>{destination?.address}</b></div><div className="confirmation-info"><span>Moto · 1 pasajero</span><span>{quote.distanceKm.toFixed(1)} km · {quote.estimatedDurationMin} min</span></div><div className="confirmation-price"><span>Tarifa propuesta</span><b>{quote.currency} {price}</b></div></section><p className="flow-notice">La tarifa puede variar si la ruta cambia. No se realizará ningún cobro en línea en este MVP.</p><button className="trip-main-action" disabled={busy} onClick={publish}>{busy ? "Publicando…" : "Confirmar y pedir moto"}<span>→</span></button></>}
 
