@@ -1,0 +1,10 @@
+.git
+node_modules
+**/node_modules
+coverage
+dist
+.next
+private-uploads
+backups
+*.log
+*.tsbuildinfo

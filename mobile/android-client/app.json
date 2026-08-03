@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "MotoYa",
+    "slug": "motoya-android",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "motoya",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "ni.motoya.android",
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "plugins": ["expo-router", "expo-location"],
+    "extra": {
+      "apiUrl": "https://motoya-api.onrender.com/api"
+    }
+  }
+}
