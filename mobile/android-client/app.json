@@ -10,7 +10,7 @@
       "package": "ni.motoya.android",
       "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
-    "plugins": ["expo-router", "expo-location"],
+    "plugins": ["expo-router", "expo-location", ["expo-image-picker", { "photosPermission": "MotoYa necesita acceso a tus fotos para adjuntar documentos y comprobantes.", "cameraPermission": "MotoYa necesita la cámara para fotografiar documentos y comprobantes." }]],
     "extra": {
       "apiUrl": "https://motoya-api.onrender.com/api"
     }
