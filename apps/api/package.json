@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc",
-    "start": "prisma migrate deploy && node dist/src/server.js",
+    "start": "node dist/src/server.js",
+    "migrate:deploy": "prisma migrate deploy",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --ext .ts",
     "test": "jest --runInBand",
