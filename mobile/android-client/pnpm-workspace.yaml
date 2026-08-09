@@ -2,3 +2,4 @@ allowBuilds:
   # This resolver has no native postinstall step required by the Android app.
   # Declaring the policy explicitly keeps installs reproducible in CI.
   unrs-resolver: false
+nodeLinker: hoisted
