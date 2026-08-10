@@ -8,6 +8,7 @@ const options = [
   { href: "/admin/payments", tag: "COBROS", title: "Pagos y depósitos", description: "Cuentas receptoras y comprobantes pendientes.", icon: "M3 7h18v10H3zM3 10h18M7 16h3" },
   { href: "/admin/plans", tag: "SUSCRIPCIONES", title: "Planes", description: "Precios, vigencia y disponibilidad de cada plan.", icon: "M12 3 3 9l9 12 9-12-9-6ZM3 9h18" },
   { href: "/admin/fares", tag: "VIAJES", title: "Tarifas de viaje", description: "Monto base, tarifa por kilómetro y mínimo.", icon: "M4 6h16M4 12h10M4 18h16" },
+  { href: "/admin/configuration/maintenance", tag: "MANTENIMIENTO", title: "Depurar datos de prueba", description: "Limpia actividad temporal con una confirmacion segura.", icon: "M12 9v4m0 4h.01M5 4h14l1 4H4l1-4Zm2 8h12v8H6z" },
   { href: "/admin/ads", tag: "COMUNICACIÓN", title: "Anuncios", description: "Contenido y orden del carrusel de clientes.", icon: "M3 11v2a2 2 0 0 0 2 2h1l3 4v-6M6 15h1l10-5v8L7 13" },
 ];
 
