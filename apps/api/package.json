@@ -4,7 +4,7 @@
     "scripts":  {
                     "dev":  "tsx watch src/server.ts",
                     "build":  "prisma generate \u0026\u0026 tsc",
-                    "start":  "node dist/src/server.js",
+                    "start":  "prisma migrate deploy && node dist/src/server.js",
                     "migrate:deploy":  "prisma migrate deploy",
                     "typecheck":  "tsc --noEmit",
                     "lint":  "eslint src tests --ext .ts",
