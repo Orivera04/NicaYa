@@ -3,25 +3,11 @@ import { AppError } from "../lib/error.js";
 
 export const demoCleanupConfirmation = "BORRAR DATOS DE PRUEBA";
 
-const normalize = (value: string) => value
-  .normalize("NFD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .trim()
-  .toLowerCase();
-
-type CleanupUser = { id: string; name: string; email: string; role: string };
-
-const isRider4 = (user: CleanupUser) => {
-  const name = normalize(user.name);
-  const email = normalize(user.email);
-  return user.role === "RIDER" && (name === "rider4" || email.startsWith("rider4@"));
-};
-
-const isHeldaRueda = (user: CleanupUser) => {
-  const name = normalize(user.name);
-  const email = normalize(user.email);
-  return user.role === "CLIENT" && (name === "helda rueda" || email.includes("heldarueda"));
-};
+const cleanupTargets = {
+  admin: "admin@motoya.com",
+  rider: "rider4@motoya.com",
+  client: "heldarueda@gmail.com",
+} as const;
 
 export type DemoCleanupSummary = {
   retained: { role: string; email: string }[];
@@ -32,28 +18,23 @@ export type DemoCleanupSummary = {
   savedPlaces: number;
 };
 
-export async function cleanDemoData(prisma: PrismaClient, actorId?: string): Promise<DemoCleanupSummary> {
-  const users = await prisma.user.findMany({
+export async function cleanDemoData(prisma: PrismaClient): Promise<DemoCleanupSummary> {
+  const retainedUsers = await prisma.user.findMany({
+    where: { email: { in: [cleanupTargets.admin, cleanupTargets.rider, cleanupTargets.client], mode: "insensitive" } },
     select: { id: true, name: true, email: true, role: true },
-    orderBy: { createdAt: "asc" },
   });
-  const admin = actorId
-    ? users.find((user) => user.id === actorId && user.role === "ADMIN")
-    : users.find((user) => user.role === "ADMIN");
-  const riders = users.filter(isRider4);
-  const clients = users.filter(isHeldaRueda);
+  const admin = retainedUsers.find((user) => user.role === "ADMIN" && user.email.toLowerCase() === cleanupTargets.admin);
+  const rider = retainedUsers.find((user) => user.role === "RIDER" && user.email.toLowerCase() === cleanupTargets.rider);
+  const client = retainedUsers.find((user) => user.role === "CLIENT" && user.email.toLowerCase() === cleanupTargets.client);
 
-  if (!admin || riders.length !== 1 || clients.length !== 1) {
+  if (!admin || !rider || !client || retainedUsers.length !== 3) {
     throw new AppError(
       409,
       "CLEANUP_TARGETS_NOT_FOUND",
-      "No fue posible identificar de forma segura al administrador actual, Rider4 y Helda Rueda. No se elimino ningun dato.",
+      "No se encontraron las tres cuentas autorizadas para la limpieza. No se elimino ningun dato.",
     );
   }
 
-  const rider = riders[0];
-  const client = clients[0];
-  const retainedUsers = [admin, rider, client];
   const retainedIds = retainedUsers.map((user) => user.id);
   const retainedRider = await prisma.riderProfile.findUnique({
     where: { userId: rider.id },

@@ -31,6 +31,6 @@ adminRouter.post("/subscription-payments/:id/confirm",async(req,res)=>{const pay
 
 adminRouter.post("/maintenance/cleanup-demo-data", async (req, res) => {
   z.object({ confirmation: z.literal(demoCleanupConfirmation) }).parse(req.body);
-  const result = await cleanDemoData(prisma, req.user!.id);
+  const result = await cleanDemoData(prisma);
   res.json(result);
 });
