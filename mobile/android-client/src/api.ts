@@ -15,7 +15,7 @@ export type Trip = {
   distanceKm: number; estimatedDurationMin: number; riderLat?: number | null; riderLng?: number | null;
   rider?: Rider | null; client?: { name: string; phone?: string | null } | null; notes?: string | null;
   stops?: Place[] | null; rating?: { score: number; comment?: string | null; riderScore?: number | null; riderComment?: string | null } | null;
-  locations?: LocationPoint[]; startLocation?: LocationPoint | null;
+  locations?: LocationPoint[]; startLocation?: LocationPoint | null; createdAt?: string;
 };
 export type Offer = { id: string; amount: string; currency: string; rider: { id?: string; name: string } };
 export type Quote = { estimatedPrice: number; minimumFare: number; maximumFare: number; currency: string; distanceKm: number; estimatedDurationMin: number };
