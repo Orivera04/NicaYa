@@ -16,6 +16,7 @@ type Props = {
   onDestinationPress?: () => void;
   label?: string;
   height?: number;
+  searching?: boolean;
 };
 
 type MapPoint = { lat: number; lng: number };
@@ -29,7 +30,7 @@ function Pin({ kind, text, onPress }: { kind: "origin" | "destination" | "rider"
   return <Pressable disabled={!onPress} onPress={onPress} style={[styles.pin, styles[`pin_${kind}`], onPress && styles.pinInteractive]}><Text style={styles.pinIcon}>{icon}</Text><Text style={styles.pinLabel}>{text}</Text></Pressable>;
 }
 
-export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340 }: Props) {
+export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, searching = false }: Props) {
   const cameraRef = useRef<CameraRef>(null);
   const [focused, setFocused] = useState(true);
   const tripOrigin = trip ? { lat: trip.originLat, lng: trip.originLng, address: trip.originAddress } : origin;
@@ -37,7 +38,7 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   const rider = trip?.riderLat != null && trip?.riderLng != null ? { lat: trip.riderLat, lng: trip.riderLng, address: "Rider" } : currentLocation;
   const history = useMemo(() => (trip?.locations || []).map(point => ({ lat: point.lat, lng: point.lng })), [trip?.locations]);
   const planned = useMemo(() => route.map(point => ({ lat: point.lat, lng: point.lng })), [route]);
-  const focusPoints = useMemo(() => [tripOrigin, tripDestination, rider].filter(Boolean) as Place[], [tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng, rider?.lat, rider?.lng]);
+  const focusPoints = useMemo(() => [tripOrigin, searching ? undefined : tripDestination, searching ? undefined : rider].filter(Boolean) as Place[], [tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng, rider?.lat, rider?.lng, searching]);
   const focus = () => {
     if (!focusPoints.length) return;
     setFocused(true);
@@ -49,12 +50,12 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   return <View style={[styles.shell, { height }]}>
     <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => { if (!editable || !onMapPress) return; const [lng, lat] = event.nativeEvent.lngLat; onMapPress({ lat, lng, address: "Punto seleccionado en el mapa" }); }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFocused(false); }}>
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
-      {planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-line" type="line" paint={{ "line-color": theme.violet, "line-width": 5, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
-      {history.length > 1 ? <GeoJSONSource id="travelled-route" data={lineFeature(history)}><Layer id="travelled-route-line" type="line" paint={{ "line-color": theme.cyan, "line-width": 6, "line-opacity": 1 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
-      {tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
-      {tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
-      {rider ? <ViewAnnotation id="rider" lngLat={toLngLat(rider)} anchor="center"><Pin kind="rider" text="Moto" /></ViewAnnotation> : null}
-      {trip?.status === "RIDER_ON_THE_WAY" && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="center"><Pin kind="client" text="Pasajero" onPress={onOriginPress} /></ViewAnnotation> : null}
+      {!searching && planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-line" type="line" paint={{ "line-color": theme.violet, "line-width": 5, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
+      {!searching && history.length > 1 ? <GeoJSONSource id="travelled-route" data={lineFeature(history)}><Layer id="travelled-route-line" type="line" paint={{ "line-color": theme.cyan, "line-width": 6, "line-opacity": 1 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
+      {!searching && tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
+      {!searching && tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
+      {!searching && rider ? <ViewAnnotation id="rider" lngLat={toLngLat(rider)} anchor="center"><Pin kind="rider" text="Moto" /></ViewAnnotation> : null}
+      {(searching || trip?.status === "RIDER_ON_THE_WAY") && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="center"><Pin kind="client" text={searching ? "Tú" : "Pasajero"} onPress={onOriginPress} /></ViewAnnotation> : null}
     </Map>
     <View pointerEvents="none" style={styles.chip}><Text style={styles.chipText}>{label || (editable ? "Toca el mapa para corregir el destino" : trip?.status === "IN_PROGRESS" ? "Viaje en curso" : "Mapa en vivo")}</Text></View>
     {!focused ? <Pressable accessibilityLabel="Centrar mapa" style={styles.focus} onPress={focus}><Text style={styles.focusText}>◎</Text></Pressable> : null}
