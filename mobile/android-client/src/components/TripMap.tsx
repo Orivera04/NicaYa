@@ -12,6 +12,8 @@ type Props = {
   route?: Place[];
   editable?: boolean;
   onMapPress?: (place: Place) => void;
+  onOriginPress?: () => void;
+  onDestinationPress?: () => void;
   label?: string;
   height?: number;
 };
@@ -22,12 +24,12 @@ const DEFAULT_CENTER: LngLat = [-86.2514, 12.1364];
 const toLngLat = (place: MapPoint): LngLat => [place.lng, place.lat];
 const lineFeature = (points: MapPoint[]) => ({ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: points.map(toLngLat) } });
 
-function Pin({ kind, text }: { kind: "origin" | "destination" | "rider" | "client"; text: string }) {
-  const icon = kind === "rider" ? "🏍" : kind === "client" ? "●" : "⚑";
-  return <View style={[styles.pin, styles[`pin_${kind}`]]}><Text style={styles.pinIcon}>{icon}</Text><Text style={styles.pinLabel}>{text}</Text></View>;
+function Pin({ kind, text, onPress }: { kind: "origin" | "destination" | "rider" | "client"; text: string; onPress?: () => void }) {
+  const icon = kind === "rider" ? "M" : kind === "client" ? "P" : kind === "origin" ? "S" : "D";
+  return <Pressable disabled={!onPress} onPress={onPress} style={[styles.pin, styles[`pin_${kind}`], onPress && styles.pinInteractive]}><Text style={styles.pinIcon}>{icon}</Text><Text style={styles.pinLabel}>{text}</Text></Pressable>;
 }
 
-export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, label, height = 340 }: Props) {
+export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340 }: Props) {
   const cameraRef = useRef<CameraRef>(null);
   const [focused, setFocused] = useState(true);
   const tripOrigin = trip ? { lat: trip.originLat, lng: trip.originLng, address: trip.originAddress } : origin;
@@ -39,30 +41,23 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   const focus = () => {
     if (!focusPoints.length) return;
     setFocused(true);
-    if (focusPoints.length === 1) {
-      cameraRef.current?.easeTo({ center: toLngLat(focusPoints[0]), zoom: 15, duration: 450, easing: "ease" });
-      return;
-    }
+    if (focusPoints.length === 1) { cameraRef.current?.easeTo({ center: toLngLat(focusPoints[0]), zoom: 15, duration: 450, easing: "ease" }); return; }
     const lats = focusPoints.map(point => point.lat); const lngs = focusPoints.map(point => point.lng);
     cameraRef.current?.fitBounds([Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)], { padding: { top: 70, right: 58, bottom: 130, left: 58 }, duration: 550, easing: "ease" });
   };
-  useEffect(() => { const timeout = setTimeout(focus, 300); return () => clearTimeout(timeout); }, [trip?.id, trip?.status, rider?.lat, rider?.lng, tripOrigin?.lat, tripDestination?.lat]);
+  useEffect(() => { const timeout = setTimeout(focus, 300); return () => clearTimeout(timeout); }, [trip?.id, trip?.status, rider?.lat, rider?.lng, tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng]);
   return <View style={[styles.shell, { height }]}>
-    <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => {
-      if (!editable || !onMapPress) return;
-      const [lng, lat] = event.nativeEvent.lngLat;
-      onMapPress({ lat, lng, address: "Punto seleccionado en el mapa" });
-    }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFocused(false); }}>
+    <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => { if (!editable || !onMapPress) return; const [lng, lat] = event.nativeEvent.lngLat; onMapPress({ lat, lng, address: "Punto seleccionado en el mapa" }); }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFocused(false); }}>
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
       {planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-line" type="line" paint={{ "line-color": theme.violet, "line-width": 5, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
       {history.length > 1 ? <GeoJSONSource id="travelled-route" data={lineFeature(history)}><Layer id="travelled-route-line" type="line" paint={{ "line-color": theme.cyan, "line-width": 6, "line-opacity": 1 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
-      {tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" /></ViewAnnotation> : null}
-      {tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" /></ViewAnnotation> : null}
+      {tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
+      {tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
       {rider ? <ViewAnnotation id="rider" lngLat={toLngLat(rider)} anchor="center"><Pin kind="rider" text="Moto" /></ViewAnnotation> : null}
-      {trip?.status === "RIDER_ON_THE_WAY" && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="center"><Pin kind="client" text="Pasajero" /></ViewAnnotation> : null}
+      {trip?.status === "RIDER_ON_THE_WAY" && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="center"><Pin kind="client" text="Pasajero" onPress={onOriginPress} /></ViewAnnotation> : null}
     </Map>
     <View pointerEvents="none" style={styles.chip}><Text style={styles.chipText}>{label || (editable ? "Toca el mapa para corregir el destino" : trip?.status === "IN_PROGRESS" ? "Viaje en curso" : "Mapa en vivo")}</Text></View>
-    {!focused ? <Pressable accessibilityLabel="Centrar mapa" style={styles.focus} onPress={focus}><Text style={styles.focusText}>⌖</Text></Pressable> : null}
+    {!focused ? <Pressable accessibilityLabel="Centrar mapa" style={styles.focus} onPress={focus}><Text style={styles.focusText}>◎</Text></Pressable> : null}
   </View>;
 }
 
@@ -72,7 +67,7 @@ const styles = StyleSheet.create({
   chipText: { color: theme.white, fontSize: 12, fontWeight: "800" },
   focus: { position: "absolute", right: 14, bottom: 14, width: 48, height: 48, borderRadius: 24, backgroundColor: theme.panel, alignItems: "center", justifyContent: "center", elevation: 6 },
   focusText: { color: theme.white, fontSize: 26, lineHeight: 30 },
-  pin: { minWidth: 46, minHeight: 46, borderRadius: 18, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: theme.white, elevation: 7, shadowColor: "#00143F", shadowOpacity: .32, shadowRadius: 12 },
+  pin: { minWidth: 48, minHeight: 48, borderRadius: 18, paddingHorizontal: 7, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: theme.white, elevation: 7, shadowColor: "#00143F", shadowOpacity: .32, shadowRadius: 12 },
   pin_origin: { backgroundColor: "#0C9B8B" }, pin_destination: { backgroundColor: theme.orange }, pin_rider: { backgroundColor: "#176BDE" }, pin_client: { backgroundColor: theme.violet },
-  pinIcon: { color: theme.white, fontSize: 17, fontWeight: "900" }, pinLabel: { color: theme.white, fontSize: 9, fontWeight: "900", marginTop: -2 },
+  pinIcon: { color: theme.white, fontSize: 16, fontWeight: "900" }, pinInteractive: { transform: [{ scale: 1.06 }] }, pinLabel: { color: theme.white, fontSize: 9, fontWeight: "900", marginTop: -2 },
 });
