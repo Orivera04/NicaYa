@@ -16,7 +16,7 @@ type Props = {
   onDestinationPress?: () => void;
   label?: string;
   height?: number;
-  searching?: boolean;
+  searching?: boolean;`r`n  hideLabel?: boolean;
 };
 
 type MapPoint = { lat: number; lng: number };
@@ -30,7 +30,7 @@ function Pin({ kind, text, onPress }: { kind: "origin" | "destination" | "rider"
   return <Pressable disabled={!onPress} onPress={onPress} style={[styles.pin, styles[`pin_${kind}`], onPress && styles.pinInteractive]}><Text style={styles.pinIcon}>{icon}</Text><Text style={styles.pinLabel}>{text}</Text></Pressable>;
 }
 
-export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, searching = false }: Props) {
+export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, searching = false, hideLabel = false }: Props) {
   const cameraRef = useRef<CameraRef>(null);
   const [focused, setFocused] = useState(true);
   const tripOrigin = trip ? { lat: trip.originLat, lng: trip.originLng, address: trip.originAddress } : origin;
@@ -57,7 +57,7 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
       {!searching && rider ? <ViewAnnotation id="rider" lngLat={toLngLat(rider)} anchor="center"><Pin kind="rider" text="Moto" /></ViewAnnotation> : null}
       {(searching || trip?.status === "RIDER_ON_THE_WAY") && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="center"><Pin kind="client" text={searching ? "Tú" : "Pasajero"} onPress={onOriginPress} /></ViewAnnotation> : null}
     </Map>
-    <View pointerEvents="none" style={styles.chip}><Text style={styles.chipText}>{label || (editable ? "Toca el mapa para corregir el destino" : trip?.status === "IN_PROGRESS" ? "Viaje en curso" : "Mapa en vivo")}</Text></View>
+    {!hideLabel ? <View pointerEvents="none" style={styles.chip}><Text style={styles.chipText}>{label || (editable ? "Toca el mapa para corregir el destino" : trip?.status === "IN_PROGRESS" ? "Viaje en curso" : "Mapa en vivo")}</Text></View> : null}
     {!focused ? <Pressable accessibilityLabel="Centrar mapa" style={styles.focus} onPress={focus}><Text style={styles.focusText}>◎</Text></Pressable> : null}
   </View>;
 }
