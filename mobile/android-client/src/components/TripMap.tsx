@@ -16,7 +16,8 @@ type Props = {
   onDestinationPress?: () => void;
   label?: string;
   height?: number;
-  searching?: boolean;`r`n  hideLabel?: boolean;
+  searching?: boolean;
+  hideLabel?: boolean;
 };
 
 type MapPoint = { lat: number; lng: number };
