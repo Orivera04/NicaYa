@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { api, type Session } from "../api";
+import { RiderSubscriptionScreen } from "./RiderSubscriptionScreen";
 import { theme } from "../theme";
 
 type DocumentType = "NATIONAL_ID" | "DRIVER_LICENSE" | "VEHICLE_REGISTRATION" | "INSURANCE";
@@ -124,7 +125,7 @@ export function RiderAccountScreen({ session, onMessage }: { session: Session; o
     } catch (error) { onMessage((error as Error).message); } finally { setBusy(false); }
   };
 
-  if (section === "subscription") return <SubscriptionScreen onBack={() => setSection("account")} onMessage={onMessage} />;
+  if (section === "subscription") return <RiderSubscriptionScreen onBack={() => setSection("account")} onMessage={onMessage} />;
   return <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
     <Text style={styles.eyebrow}>CUENTA RIDER</Text><Text style={styles.title}>Tu activación</Text><Text style={styles.subtitle}>{activation?.nextAction || "Consultando el estado de tu cuenta…"}</Text>
     <View style={styles.hero}><Text style={styles.heroLabel}>ESTADO OPERATIVO</Text><Text style={styles.heroTitle}>{activationLabel(activation?.status)}</Text><Text style={styles.heroText}>{activation?.subscriptionActive ? "Tu suscripción está activa." : "Completa cada paso para poder recibir solicitudes."}</Text></View>
