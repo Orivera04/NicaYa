@@ -54,11 +54,15 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       ...options,
       headers: { Accept: "application/json", "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
     });
-  } catch {
+  } catch (error: unknown) {
     // A transport failure has no HTTP status/code. Keep it distinct from the
     // server-side rate-limit response so the user is not told to wait when
     // the device simply could not reach the API.
-    throw new MotoYaApiError(0, "NETWORK_UNREACHABLE", "No pudimos contactar al servidor de MotoYa. Esto no es un límite de intentos; verifica tu conexión e inténtalo de nuevo.");
+    const nativeError = error instanceof Error ? error : null;
+    const cause = nativeError?.cause instanceof Error ? nativeError.cause.message : "";
+    const detail = [nativeError?.message, cause].filter(Boolean).join(" · ");
+    console.warn("MotoYa API transport error", { path, apiUrl, detail });
+    throw new MotoYaApiError(0, "NETWORK_UNREACHABLE", `No pudimos contactar al servidor de MotoYa. Esto no es un límite de intentos; verifica tu conexión e inténtalo de nuevo.${detail ? ` Detalle: ${detail}` : ""}`);
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
