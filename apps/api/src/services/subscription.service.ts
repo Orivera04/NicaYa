@@ -32,6 +32,15 @@ export async function createSubscriptionOrder(userId: string, planId: string, me
   }, { isolationLevel: "Serializable" });
 }
 
+export async function cancelPendingSubscriptionOrder(userId: string, orderId: string) {
+  const order = await prisma.subscriptionOrder.findFirst({ where: { id: orderId, rider: { userId } }, include: { payments: true } });
+  if (!order) fail(404, "SUBSCRIPTION_ORDER_NOT_FOUND", "No encontramos la solicitud de suscripción.");
+  if (order.status !== "PENDING_PAYMENT") fail(409, "SUBSCRIPTION_ORDER_NOT_CANCELLABLE", "No puedes cambiar el plan porque el comprobante ya está en revisión.");
+  return prisma.$transaction(async (tx) => {
+    await tx.payment.updateMany({ where: { orderId: order.id, status: "PENDING_PAYMENT" }, data: { status: "CANCELLED" } });
+    return tx.subscriptionOrder.update({ where: { id: order.id }, data: { status: "CANCELLED" } });
+  }, { isolationLevel: "Serializable" });
+}
 async function ownedPayment(userId: string, paymentId: string) {
   const payment = await prisma.payment.findUnique({ where: { id: paymentId }, include: { order: { include: { rider: true } } } });
   if (!payment || payment.order.rider.userId !== userId) fail(404, "PAYMENT_NOT_FOUND", "Pago no encontrado.");

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { authenticate, authorize } from "../middleware/auth.js";
-import { createSubscriptionOrder, markMotoExpressPaid, reviewPayment, submitTransfer } from "../services/subscription.service.js";
+import { cancelPendingSubscriptionOrder, createSubscriptionOrder, markMotoExpressPaid, reviewPayment, submitTransfer } from "../services/subscription.service.js";
 import { safeRouter } from "../middleware/safe-router.js";
 import { decryptProtectedImage, protectImageInput } from "../lib/protected-media.js";
 
@@ -13,6 +13,7 @@ function readablePayment<T extends { proofReference: string | null }>(payment: T
 subscriptionsRouter.get("/plans", authorize("RIDER"), async (_req, res) => res.json(await prisma.subscriptionPlan.findMany({ where: { isActive: true }, orderBy: { displayOrder: "asc" } })));
 subscriptionsRouter.get("/methods", authorize("RIDER"), async (_req, res) => res.json(await prisma.paymentMethodConfig.findMany({ where: { isActive: true }, select: { code: true, name: true, instructions: true, configuration: true } })));
 subscriptionsRouter.post("/orders", authorize("RIDER"), async (req, res) => { const data = z.object({ planId: z.string(), methodCode: z.enum(["MOTO_EXPRESS", "BANK_TRANSFER"]) }).parse(req.body); res.status(201).json(await createSubscriptionOrder(req.user!.id, data.planId, data.methodCode)); });
+subscriptionsRouter.post("/orders/:id/cancel", authorize("RIDER"), async (req, res) => res.json(await cancelPendingSubscriptionOrder(req.user!.id, req.params.id)));
 subscriptionsRouter.get("/orders", authorize("RIDER"), async (req, res) => {
   const orders = await prisma.subscriptionOrder.findMany({ where: { rider: { userId: req.user!.id } }, include: { plan: true, payments: { include: { method: true } } }, orderBy: { createdAt: "desc" } });
   res.json(orders.map((order) => ({ ...order, payments: order.payments.map(readablePayment) })));
