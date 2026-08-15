@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import { fetch as expoFetch } from "expo/fetch";
 import { io, type Socket } from "socket.io-client";
 
 export type Role = "CLIENT" | "RIDER" | "ADMIN";
@@ -54,9 +55,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let response: Response;
     try {
-      response = await fetch(apiUrl + path, {
+      response = await expoFetch(apiUrl + path, {
         ...options,
-        headers: { Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store", Pragma: "no-cache", Connection: "close", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
+        headers: { Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store", Pragma: "no-cache", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
       });
     } catch (error: unknown) {
       transportError = error;
