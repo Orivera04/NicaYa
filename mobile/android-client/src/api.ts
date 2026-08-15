@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { fetch as expoFetch } from "expo/fetch";
+import { NativeModules, Platform } from "react-native";
 import { io, type Socket } from "socket.io-client";
 
 export type Role = "CLIENT" | "RIDER" | "ADMIN";
@@ -28,6 +29,18 @@ export class MotoYaApiError extends Error {
     this.name = "MotoYaApiError";
   }
 }
+type NativeHttpResult = { status: number; body: string };
+type NativeHttpModule = { request: (url: string, method: string, headers: Record<string, string>, body: string | null) => Promise<NativeHttpResult> };
+type ApiResponse = { status: number; ok: boolean; json: () => Promise<any> };
+const nativeHttp = NativeModules.MotoYaHttp as NativeHttpModule | undefined;
+
+async function requestApi(url: string, options: RequestInit, headers: Record<string, string>): Promise<ApiResponse> {
+  if (Platform.OS === "android" && nativeHttp) {
+    const result = await nativeHttp.request(url, options.method || "GET", headers, typeof options.body === "string" ? options.body : null);
+    return { status: result.status, ok: result.status >= 200 && result.status < 300, json: async () => JSON.parse(result.body) };
+  }
+  return expoFetch(url, { ...options, headers }) as unknown as ApiResponse;
+}
 const apiUrl = String(Constants.expoConfig?.extra?.apiUrl || "https://motoya-api.onrender.com/api").replace(/\/$/, "");
 const socketUrl = apiUrl.replace(/\/api$/, "");
 let current: Session | null = null;
@@ -53,12 +66,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   const session = await restoreSession();
   let transportError: unknown = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    let response: Response;
+    let response: ApiResponse;
     try {
-      response = await expoFetch(apiUrl + path, {
-        ...options,
-        headers: { Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store", Pragma: "no-cache", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
-      });
+      const optionHeaders = options.headers instanceof Headers ? Object.fromEntries(options.headers.entries()) : Array.isArray(options.headers) ? Object.fromEntries(options.headers) : options.headers || {};
+      const headers: Record<string, string> = { Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store", Pragma: "no-cache", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...optionHeaders };
+      response = await requestApi(apiUrl + path, options, headers);
     } catch (error: unknown) {
       transportError = error;
       if (attempt < 2) { await wait(350 * (attempt + 1)); continue; }
