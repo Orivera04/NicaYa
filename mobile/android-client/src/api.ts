@@ -56,7 +56,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return body as T;
 }
 export const login = (email: string, password: string) => api<Session>("/auth/login", { method: "POST", body: JSON.stringify({ email, password, remember: true }) });
-export const register = (role: Exclude<Role, "ADMIN">, name: string, email: string, password: string) => api<Session>(`/auth/register/${role === "CLIENT" ? "client" : "rider"}`, { method: "POST", body: JSON.stringify({ name, email, password }) });
+export const register = (role: Exclude<Role, "ADMIN">, name: string, phone: string, email: string, password: string) => api<Session>(`/auth/register/${role === "CLIENT" ? "client" : "rider"}`, { method: "POST", body: JSON.stringify({ name, phone, email, password }) });
 export const logout = async () => { try { await api("/auth/logout", { method: "POST", body: "{}" }); } finally { disconnectSocket(); await setSession(null); } };
 export const searchPlaces = (query: string) => api<Place[]>(`/geocoding/search?q=${encodeURIComponent(query.trim())}`);
 export const getRoute = (from: Place, to: Place) => api<{ points: Place[] }>("/routing/route", { method: "POST", body: JSON.stringify({ from, to }) });

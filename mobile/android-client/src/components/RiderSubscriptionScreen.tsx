@@ -75,7 +75,9 @@ export function RiderSubscriptionScreen({ onBack, onMessage }: { onBack: () => v
     const resumeMethod = methods.find(item => item.code === payment.method.code || item.name === payment.method.name);
     if (!resumeMethod) return onMessage("El método de pago ya no está disponible. Contacta a administración.");
     setMethod(resumeMethod);
+    setSelected(plans.find(plan => plan.name === pendingOrder.planNameSnapshot) || null);
     setCreated({ order: pendingOrder, payment, method: resumeMethod });
+    setStage("checkout");
   };
   const chooseProof = () => Alert.alert("Adjuntar comprobante", "Elige el origen de la imagen.", [
     { text: "Cancelar", style: "cancel" },
