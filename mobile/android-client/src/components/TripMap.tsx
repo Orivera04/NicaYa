@@ -23,7 +23,7 @@ type Props = {
 
 type MapPoint = { lat: number; lng: number };
 type PinKind = "origin" | "destination" | "rider" | "client";
-const MAP_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+const MAP_STYLE = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json";
 const DEFAULT_CENTER: LngLat = [-86.2514, 12.1364];
 const toLngLat = (place: MapPoint): LngLat => [place.lng, place.lat];
 const lineFeature = (points: MapPoint[]) => ({ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: points.map(toLngLat) } });
