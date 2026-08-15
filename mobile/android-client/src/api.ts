@@ -46,35 +46,40 @@ export async function setSession(session: Session | null) {
   if (session) await AsyncStorage.setItem("motoya.session", JSON.stringify(session));
   else await AsyncStorage.removeItem("motoya.session");
 }
+const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const session = await restoreSession();
-  let response: Response;
-  try {
-    response = await fetch(apiUrl + path, {
-      ...options,
-      headers: { Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store", Pragma: "no-cache", Connection: "close", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
-    });
-  } catch (error: unknown) {
-    // A transport failure has no HTTP status/code. Keep it distinct from the
-    // server-side rate-limit response so the user is not told to wait when
-    // the device simply could not reach the API.
-    const nativeError = error instanceof Error ? error : null;
-    const cause = nativeError?.cause instanceof Error ? nativeError.cause.message : "";
-    const detail = [nativeError?.message, cause].filter(Boolean).join(" · ");
-    console.warn("MotoYa API transport error", { path, apiUrl, detail });
-    throw new MotoYaApiError(0, "NETWORK_UNREACHABLE", `No pudimos contactar al servidor de MotoYa. Esto no es un límite de intentos; verifica tu conexión e inténtalo de nuevo.${detail ? ` Detalle: ${detail}` : ""}`);
+  let transportError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(apiUrl + path, {
+        ...options,
+        headers: { Accept: "application/json", "Content-Type": "application/json", "Cache-Control": "no-store", Pragma: "no-cache", Connection: "close", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
+      });
+    } catch (error: unknown) {
+      transportError = error;
+      if (attempt < 2) { await wait(350 * (attempt + 1)); continue; }
+      const nativeError = error instanceof Error ? error : null;
+      const cause = nativeError?.cause instanceof Error ? nativeError.cause.message : "";
+      const detail = [nativeError?.message, cause].filter(Boolean).join(" · ");
+      console.warn("MotoYa API transport error", { path, apiUrl, attempts: attempt + 1, detail });
+      throw new MotoYaApiError(0, "NETWORK_UNREACHABLE", `No pudimos contactar al servidor de MotoYa después de 3 intentos. Esto no es un límite de intentos; verifica tu conexión e inténtalo de nuevo.${detail ? ` Detalle: ${detail}` : ""}`);
+    }
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      const code = typeof body?.error?.code === "string" ? body.error.code : undefined;
+      const message = typeof body?.error?.message === "string"
+        ? body.error.message
+        : response.status === 429
+          ? "Demasiados intentos. Espera unos minutos antes de volver a intentarlo."
+          : "No fue posible completar la acción.";
+      throw new MotoYaApiError(response.status, code, message);
+    }
+    return body as T;
   }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const code = typeof body?.error?.code === "string" ? body.error.code : undefined;
-    const message = typeof body?.error?.message === "string"
-      ? body.error.message
-      : response.status === 429
-        ? "Demasiados intentos. Espera unos minutos antes de volver a intentarlo."
-        : "No fue posible completar la acción.";
-    throw new MotoYaApiError(response.status, code, message);
-  }
-  return body as T;
+  throw transportError instanceof Error ? transportError : new MotoYaApiError(0, "NETWORK_UNREACHABLE");
 }
 export const login = (email: string, password: string) => api<Session>("/auth/login", { method: "POST", body: JSON.stringify({ email, password, remember: true }) });
 export const register = (role: Exclude<Role, "ADMIN">, name: string, phone: string, email: string, password: string) => api<Session>(`/auth/register/${role === "CLIENT" ? "client" : "rider"}`, { method: "POST", body: JSON.stringify({ name, phone, email, password }) });
