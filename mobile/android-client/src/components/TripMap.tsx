@@ -60,9 +60,11 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   const focus = () => {
     if (!focusPoints.length) return;
     setFocused(true);
-    if (focusPoints.length === 1) { cameraRef.current?.easeTo({ center: toLngLat(focusPoints[0]), zoom: 15, duration: 450, easing: "ease" }); return; }
+    if (focusPoints.length === 1) { cameraRef.current?.easeTo({ center: toLngLat(focusPoints[0]), zoom: 16, duration: 450, easing: "ease" }); return; }
     const lats = focusPoints.map(point => point.lat); const lngs = focusPoints.map(point => point.lng);
-    cameraRef.current?.fitBounds([Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)], { padding: { top: 70, right: 58, bottom: 130, left: 58 }, duration: 550, easing: "ease" });
+    // Keep the trip points in frame, but use a tighter viewport so the rider and
+    // the next part of the route remain legible on a phone screen.
+    cameraRef.current?.fitBounds([Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)], { padding: { top: 48, right: 30, bottom: 96, left: 30 }, duration: 550, easing: "ease" });
   };
   useEffect(() => { const timeout = setTimeout(focus, 300); return () => clearTimeout(timeout); }, [trip?.id, trip?.status, rider?.lat, rider?.lng, tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng]);
   return <View style={[styles.shell, fill ? styles.shellFill : { height }]}>
