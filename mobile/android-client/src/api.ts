@@ -12,7 +12,7 @@ export type Trip = {
   id: string; status: string; originAddress: string; destinationAddress: string;
   originLat: number; originLng: number; destinationLat: number; destinationLng: number;
   estimatedPrice: string; finalPrice?: string | null; proposedPrice?: string | null; currency: string;
-  distanceKm: number; estimatedDurationMin: number; riderLat?: number | null; riderLng?: number | null;
+  distanceKm: number; estimatedDurationMin: number; riderLat?: number | null; riderLng?: number | null; riderHeading?: number | null; riderAccuracy?: number | null; riderLocationUpdatedAt?: string | null;
   rider?: Rider | null; client?: { name: string; phone?: string | null } | null; notes?: string | null;
   stops?: Place[] | null; rating?: { score: number; comment?: string | null; riderScore?: number | null; riderComment?: string | null } | null;
   locations?: LocationPoint[]; startLocation?: LocationPoint | null; createdAt?: string;
@@ -62,6 +62,7 @@ export const updateMyProfile = (data: { name?: string; phone?: string }) => api<
 export const renameSavedPlace = (currentLabel: string, label: string) => api<Place & { id: string; label: string }>(`/places/${encodeURIComponent(currentLabel)}/label`, { method: "PATCH", body: JSON.stringify({ label }) });export const searchPlaces = (query: string) => api<Place[]>(`/geocoding/search?q=${encodeURIComponent(query.trim())}`);
 export const reverseGeocode = (lat: number, lng: number) => api<Place>(`/geocoding/reverse?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`);
 export const getRoute = (from: Place, to: Place) => api<{ points: Place[] }>("/routing/route", { method: "POST", body: JSON.stringify({ from, to }) });
+export const getRouteMatch = (points: Array<Pick<Place, "lat" | "lng">>) => api<{ segments: Place[][] }>("/routing/match", { method: "POST", body: JSON.stringify({ points }) });
 
 export async function connectSocket(onConnectionIssue?: () => void): Promise<Socket | null> {
   const session = await restoreSession();

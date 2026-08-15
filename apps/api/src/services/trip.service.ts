@@ -9,6 +9,9 @@ import { Prisma, TripStatus } from "@prisma/client";
 type TrackingLocationInput={lat:number;lng:number;accuracy?:number;heading?:number;capturedAt?:string};
 export type TripTrackingUpdate={tripId:string;clientId:string;riderId:string;locationId:string;lat:number;lng:number;accuracy:number|null;heading:number|null;recordedAt:string};
 
+const preciseMeters=(a:{lat:number;lng:number},b:{lat:number;lng:number})=>{const radius=6_371_000;const dLat=(b.lat-a.lat)*Math.PI/180;const dLng=(b.lng-a.lng)*Math.PI/180;const value=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;return 2*radius*Math.atan2(Math.sqrt(value),Math.sqrt(1-value));};
+const validHeading=(heading?:number)=>heading!==undefined&&Number.isFinite(heading)&&heading>=0&&heading<360?heading:undefined;
+
 const toTrackingUpdate=(trip:{id:string;clientId:string;riderId:string|null},location:{id:string;lat:number;lng:number;accuracy:number|null;heading:number|null;createdAt:Date}):TripTrackingUpdate=>({
   tripId:trip.id,
   clientId:trip.clientId,
@@ -36,18 +39,26 @@ const normalizeCapturedAt=(value?:string)=>{
  * Socket.io is deliberately only a notification channel; reconnecting clients
  * recover the same ordered history from PostgreSQL through GET /trips/:id.
  */
-export async function recordTripLocation(tripId:string,riderId:string,location:TrackingLocationInput):Promise<TripTrackingUpdate>{
+export async function recordTripLocation(tripId:string,riderId:string,location:TrackingLocationInput):Promise<TripTrackingUpdate|null>{
   return prisma.$transaction(async tx=>{
     const trip=await tx.trip.findUnique({where:{id:tripId},select:{id:true,clientId:true,riderId:true,status:true}});
     if(!trip) return fail(404,"TRIP_NOT_FOUND","Viaje no encontrado.");
-    const activeTrip=trip;
-    if(activeTrip.riderId!==riderId) return fail(403,"FORBIDDEN","No puedes actualizar la ubicación de este viaje.");
-    if(!["ACCEPTED","RIDER_ON_THE_WAY","RIDER_ARRIVED","IN_PROGRESS"].includes(activeTrip.status)) return fail(409,"TRIP_NOT_ACTIVE","El viaje ya no acepta ubicaciones.");
-
+    if(trip.riderId!==riderId) return fail(403,"FORBIDDEN","No puedes actualizar la ubicación de este viaje.");
+    if(!["ACCEPTED","RIDER_ON_THE_WAY","RIDER_ARRIVED","IN_PROGRESS"].includes(trip.status)) return fail(409,"TRIP_NOT_ACTIVE","El viaje ya no acepta ubicaciones.");
+    // Never persist low-quality, duplicate or physically impossible samples.
+    if(location.accuracy!==undefined&&location.accuracy>75) return null;
     const recordedAt=normalizeCapturedAt(location.capturedAt);
-    await tx.trip.update({where:{id:activeTrip.id},data:{riderLat:location.lat,riderLng:location.lng,riderAccuracy:location.accuracy??null,riderHeading:location.heading??null,riderLocationUpdatedAt:recordedAt}});
-    const persisted=await tx.tripLocation.create({data:{tripId:activeTrip.id,lat:location.lat,lng:location.lng,accuracy:location.accuracy,heading:location.heading,createdAt:recordedAt}});
-    return toTrackingUpdate(activeTrip,persisted);
+    const previous=await tx.tripLocation.findFirst({where:{tripId},orderBy:[{createdAt:"desc"},{id:"desc"}]});
+    if(previous){
+      const distance=preciseMeters(previous,location);
+      const elapsed=Math.max(1,(recordedAt.getTime()-previous.createdAt.getTime())/1_000);
+      const maxPlausibleDistance=Math.max(90,elapsed*42+(previous.accuracy||0)+(location.accuracy||0));
+      if(distance<4||distance>maxPlausibleDistance) return null;
+    }
+    const heading=validHeading(location.heading);
+    await tx.trip.update({where:{id:trip.id},data:{riderLat:location.lat,riderLng:location.lng,riderAccuracy:location.accuracy??null,riderHeading:heading??null,riderLocationUpdatedAt:recordedAt}});
+    const persisted=await tx.tripLocation.create({data:{tripId:trip.id,lat:location.lat,lng:location.lng,accuracy:location.accuracy,heading,createdAt:recordedAt}});
+    return toTrackingUpdate(trip,persisted);
   });
 }
 const operatingCenter={lat:12.1364,lng:-86.2514};

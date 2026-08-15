@@ -7,6 +7,12 @@ import { RiderAccountScreen } from "../src/components/RiderAccountScreen";
 import { theme } from "../src/theme";
 
 const DEFAULT_PLACE: Place = { lat: 12.1364, lng: -86.2514, address: "Managua, Nicaragua" };
+const gpsMeters = (a: Pick<Place, "lat" | "lng">, b: Pick<Place, "lat" | "lng">) => {
+  const radius = 6_371_000; const dLat = (b.lat - a.lat) * Math.PI / 180; const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const value = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * radius * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+};
+const safeHeading = (heading: number | null) => heading !== null && Number.isFinite(heading) && heading >= 0 && heading < 360 ? heading : undefined;
 const ACTIVE = ["REQUESTED", "ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"];
 const TRIP_STATUS_LABELS: Record<string, string> = {
   REQUESTED: "Buscando rider", ACCEPTED: "Rider asignado", RIDER_ON_THE_WAY: "Rider en camino",
@@ -84,11 +90,22 @@ function CancelTripModal({ visible, onClose, onConfirm, busy }: { visible: boole
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.requestSheet}><View style={styles.sheetHandle} /><Text style={styles.eyebrow}>CANCELAR VIAJE</Text><Text style={styles.sheetTitle}>¿Qué ocurrió?</Text><Text style={styles.pageSubtitle}>Esta información nos ayuda a mejorar la experiencia.</Text>{reasons.map(reason => <Pressable key={reason} onPress={() => setSelected(reason)} style={[styles.cancelReason, selected === reason && styles.cancelReasonActive]}><View style={[styles.cancelRadio, selected === reason && styles.cancelRadioActive]} /><Text style={[styles.cancelReasonText, selected === reason && styles.cancelReasonTextActive]}>{reason}</Text></Pressable>)}<Button title={busy ? "Cancelando…" : "Confirmar cancelación"} tone="danger" onPress={() => onConfirm(selected)} disabled={busy} /><Button title="Volver" tone="secondary" onPress={onClose} /></View></View></Modal>;
 }
 function useRoute(from?: Place | null, to?: Place | null) {
-  const [route, setRoute] = useState<Place[]>([]);
-  useEffect(() => { let live = true; if (!from || !to) { setRoute([]); return; } setRoute([]); void getRoute(from, to).then(result => { if (live) setRoute(result.points); }).catch(() => { if (live) setRoute([]); }); return () => { live = false; }; }, [from?.lat, from?.lng, to?.lat, to?.lng]);
+  const [route, setRoute] = useState<Place[]>([]); const routeRef = useRef<Place[]>([]); const lastRequest = useRef<{ from: Place; to: Place; at: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!from || !to) { routeRef.current = []; setRoute([]); return; }
+    const previous = lastRequest.current; const targetChanged = !previous || gpsMeters(previous.to, to) > 8;
+    const moved = previous ? gpsMeters(previous.from, from) : Infinity;
+    const age = previous ? Date.now() - previous.at : Infinity;
+    const nearestRoutePoint = routeRef.current.reduce((closest, point) => Math.min(closest, gpsMeters(from, point)), Infinity);
+    const offRoute = routeRef.current.length > 1 && nearestRoutePoint > 65;
+    if (!targetChanged && !offRoute && !(age > 20_000 && moved > 45)) return;
+    lastRequest.current = { from, to, at: Date.now() };
+    void getRoute(from, to).then(result => { if (live) { routeRef.current = result.points; setRoute(result.points); } }).catch(() => { if (live && !routeRef.current.length) setRoute([]); });
+    return () => { live = false; };
+  }, [from?.lat, from?.lng, to?.lat, to?.lng]);
   return route;
-}
-function useTripRealtime(trip: Trip | null, onTrip: (trip: Trip) => void, onOffer?: (offer: Offer) => void) {
+}function useTripRealtime(trip: Trip | null, onTrip: (trip: Trip) => void, onOffer?: (offer: Offer) => void) {
   useEffect(() => {
     if (!trip) return;
     let active = true; const refresh = () => { void api<Trip>(`/trips/${trip.id}`).then(next => active && onTrip(next)).catch(() => undefined); };
@@ -128,7 +145,17 @@ function ClientTrip({ active, onActive, origin, destination, onOrigin, onDestina
   const estimate = async () => { if (!destination) return onMessage("Selecciona un destino para calcular la tarifa."); setBusy(true); try { setQuote(await api<Quote>("/trips/estimate", { method: "POST", body: JSON.stringify({ origin, destination, stops, serviceCode: "MOTO" }) })); setStage("QUOTE"); } catch (error) { onMessage((error as Error).message); } finally { setBusy(false); } };
   const amount = fare ? Number(fare) : undefined;
   const continueToReview = () => { if (!quote) return; if (amount && (amount < quote.minimumFare || amount > quote.maximumFare)) return onMessage(`Propón una tarifa entre ${quote.minimumFare} y ${quote.maximumFare} ${quote.currency}.`); setStage("REVIEW"); };
-  const request = async () => { if (!destination || !quote) return; setBusy(true); try { const trip = await api<Trip>("/trips", { method: "POST", body: JSON.stringify({ origin, destination, stops, serviceCode: "MOTO", proposedPrice: amount, notes: notes.trim() || undefined }) }); onActive(trip); setStage("ROUTE"); setQuote(null); setPanelOpen(true); onMessage("Solicitud enviada a riders cercanos."); } catch (error) { onMessage((error as Error).message); } finally { setBusy(false); } };
+  const request = async () => {
+    if (!destination || !quote) return; setBusy(true);
+    try {
+      const resolvedOrigin = isPlaceholderAddress(origin.address) ? await resolvePlace(origin) : origin;
+      const resolvedDestination = isPlaceholderAddress(destination.address) ? await resolvePlace(destination) : destination;
+      if (isPlaceholderAddress(resolvedOrigin.address) || isPlaceholderAddress(resolvedDestination.address)) throw new Error("No pudimos identificar la dirección. Busca el lugar por nombre o selecciona otro punto.");
+      onOrigin(resolvedOrigin); onDestination(resolvedDestination);
+      const trip = await api<Trip>("/trips", { method: "POST", body: JSON.stringify({ origin: resolvedOrigin, destination: resolvedDestination, stops, serviceCode: "MOTO", proposedPrice: amount, notes: notes.trim() || undefined }) });
+      onActive(trip); setStage("ROUTE"); setQuote(null); setPanelOpen(true); onMessage("Solicitud enviada a riders cercanos.");
+    } catch (error) { onMessage((error as Error).message); } finally { setBusy(false); }
+  };
   const acceptOffer = (offer: Offer) => Alert.alert("Aceptar oferta", `¿Asignar el viaje a ${offer.rider.name} por ${offer.currency} ${offer.amount}?`, [{ text: "Revisar", style: "cancel" }, { text: "Aceptar", onPress: () => void (async () => { if (!active) return; setBusy(true); try { onActive(await api<Trip>(`/trips/${active.id}/offers/${offer.id}/accept`, { method: "POST" })); setOffers([]); onMessage("Rider asignado. Ya va hacia tu origen."); } catch (error) { onMessage((error as Error).message); } finally { setBusy(false); } })() }]);
   const rejectOffer = async (offer: Offer) => { if (!active) return; try { await api(`/trips/${active.id}/offers/${offer.id}/reject`, { method: "POST" }); setOffers(current => current.filter(item => item.id !== offer.id)); } catch (error) { onMessage((error as Error).message); } };
   const cancel = async (reason: string) => { if (!active) return; setBusy(true); try { await api(`/trips/${active.id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }); setCancelOpen(false); onActive(null); onMessage("Viaje cancelado."); } catch (error) { onMessage((error as Error).message); } finally { setBusy(false); } }; const shareTrip = async () => { if (!active) return; try { await Share.share({ title: "Viaje MotoYa", message: `MotoYa · ${displayAddress(active.originAddress)} → ${displayAddress(active.destinationAddress)}${active.rider ? ` · Rider: ${active.rider.name}` : ""}` }); } catch { onMessage("No se pudo compartir el viaje."); } };
@@ -191,11 +218,38 @@ function ClientAccount({ session, onLogout, onSessionUpdate }: { session: Sessio
   const activation = profile?.clientProfile?.activationStatus || profile?.status;
   return <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled"><Text style={styles.eyebrow}>CUENTA</Text><Text style={styles.pageTitle}>Hola, {name.split(" ")[0]}</Text><View style={styles.accountHero}><Text style={styles.accountRole}>PASAJERO MOTOYA</Text><Text style={styles.accountEmail}>{session.user.email}</Text><Text style={styles.accountHint}>Mantén tu nombre y teléfono actualizados para coordinar tus viajes con seguridad.</Text></View><View style={styles.card}><View style={styles.rowBetween}><Text style={styles.placeTitle}>Datos personales</Text><Pressable onPress={() => setEditing(value => !value)}><Text style={styles.placeEdit}>{editing ? "Cerrar" : "Editar"}</Text></Pressable></View>{editing ? <><Field label="Nombre completo" value={name} onChangeText={setName} placeholder="Tu nombre" /><Field label="Teléfono" value={phone} onChangeText={setPhone} placeholder="Ej. 8888 8888" numeric /><Button title={busy ? "Guardando…" : "Guardar cambios"} onPress={() => void save()} disabled={busy} /><Button title="Cancelar" tone="secondary" onPress={() => { setEditing(false); setName(profile?.name || session.user.name); setPhone(profile?.phone || ""); }} /></> : <><Text style={styles.profileName}>{profile?.name || session.user.name}</Text><Text style={styles.placeAddress}>{profile?.phone || "Teléfono pendiente"}</Text></>}</View><View style={styles.card}><Text style={styles.placeTitle}>Estado de activación</Text><View style={styles.rowBetween}><StatusPill text={clientActivationLabel(activation)} active /><Text style={styles.placeAddress}>Cuenta lista</Text></View><View style={styles.verificationGrid}><View style={styles.verificationCard}><Text style={styles.verificationLabel}>TELÉFONO</Text><Text style={styles.verificationValue}>{profile?.clientProfile?.phoneVerifiedAt ? "Verificado" : "Pendiente"}</Text><Text style={styles.verificationHint}>{profile?.clientProfile?.phoneVerifiedAt ? "Confirmado para tus viajes" : "Puedes actualizarlo arriba"}</Text></View><View style={styles.verificationCard}><Text style={styles.verificationLabel}>IDENTIDAD</Text><Text style={styles.verificationValue}>{profile?.clientProfile?.identityVerifiedAt ? "Verificada" : "Opcional"}</Text><Text style={styles.verificationHint}>No bloquea tus solicitudes</Text></View></View></View><Notice text={message} onDismiss={() => setMessage("")} /><Button title="Cerrar sesión" tone="secondary" onPress={onLogout} /></ScrollView>;
 }function RiderHome({ session, onLogout }: { session: Session; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>("work"); useEffect(() => { const subscription = BackHandler.addEventListener("hardwareBackPress", () => { if (tab !== "work") { setTab("work"); return true; } return true; }); return () => subscription.remove(); }, [tab]); const [available, setAvailable] = useState(false); const [readiness, setReadiness] = useState<Readiness>({ ready: false }); const [current, setCurrent] = useState<Place | null>(null); const [requests, setRequests] = useState<Trip[]>([]); const [activeTrip, setActiveTrip] = useState<Trip | null>(null); const [message, setMessage] = useState(""); const [requestOpen, setRequestOpen] = useState(false);
+  const [tab, setTab] = useState<Tab>("work"); useEffect(() => { const subscription = BackHandler.addEventListener("hardwareBackPress", () => { if (tab !== "work") { setTab("work"); return true; } return true; }); return () => subscription.remove(); }, [tab]); const [available, setAvailable] = useState(false); const [readiness, setReadiness] = useState<Readiness>({ ready: false }); const [current, setCurrent] = useState<Place | null>(null); const [requests, setRequests] = useState<Trip[]>([]); const [activeTrip, setActiveTrip] = useState<Trip | null>(null); const [message, setMessage] = useState(""); const [requestOpen, setRequestOpen] = useState(false); const lastAcceptedGps = useRef<(Place & { accuracy?: number; capturedAt?: string }) | null>(null); const trackingQueue = useRef<{ path: string; point: Place & { accuracy?: number; heading?: number; capturedAt: string } } | null>(null); const trackingSending = useRef(false);
   const load = useCallback(async () => { try { const [profile, ready, trips, recovered] = await Promise.all([api<{ available: boolean }>("/riders/me"), api<Readiness>("/riders/me/readiness"), api<Trip[]>("/trips").catch(() => []), api<Trip | null>("/riders/me/active-trip").catch(() => null)]); setAvailable(profile.available); setReadiness(ready); const listedActive = trips.find(item => ACTIVE.includes(item.status)); const active = ready.activeTrip || recovered || listedActive || null; setActiveTrip(active); if (ready.ready && profile.available && !active) setRequests(await api<Trip[]>("/riders/available-trips")); } catch (error) { setMessage((error as Error).message); } }, []);
-  useEffect(() => { let live = true; const receive = () => void load(); void load(); void connectSocket().then(socket => { if (live) socket?.on("trip:requested", receive); }); return () => { live = false; getSocket()?.off("trip:requested", receive); }; }, []);
+useEffect(() => { let live = true; const receive = () => void load(); void load(); void connectSocket().then(socket => { if (live) socket?.on("trip:requested", receive); }); return () => { live = false; getSocket()?.off("trip:requested", receive); }; }, []);
+  const flushTracking = useCallback(() => {
+    if (trackingSending.current || !trackingQueue.current) return;
+    const next = trackingQueue.current; trackingQueue.current = null; trackingSending.current = true;
+    void api(next.path, { method: "PATCH", body: JSON.stringify(next.point) }).catch(() => undefined).finally(() => { trackingSending.current = false; if (trackingQueue.current) flushTracking(); });
+  }, []);
   useTripRealtime(activeTrip, next => { if (isActiveTrip(next.status)) setActiveTrip(next); else { setActiveTrip(null); void load(); } });
-  useEffect(() => { let subscription: Location.LocationSubscription | null = null; if (!available && !activeTrip) return; void Location.requestForegroundPermissionsAsync().then(permission => { if (permission.status !== "granted") { setMessage("Activa el permiso de ubicación para trabajar."); return; } return Location.watchPositionAsync({ accuracy: Location.Accuracy.High, timeInterval: 8_000, distanceInterval: 8 }, location => { const point = { lat: location.coords.latitude, lng: location.coords.longitude, address: "Tu ubicación", accuracy: location.coords.accuracy ?? undefined, heading: location.coords.heading ?? undefined, capturedAt: new Date(location.timestamp).toISOString() }; setCurrent(point); const path = activeTrip ? `/trips/${activeTrip.id}/location` : "/riders/me/location"; void api(path, { method: "PATCH", body: JSON.stringify(point) }).catch(() => undefined); }).then(next => { subscription = next; }); }).catch(() => setMessage("No se pudo activar el GPS.")); return () => subscription?.remove(); }, [available, activeTrip?.id]);
+useEffect(() => {
+    let subscription: Location.LocationSubscription | null = null; let mounted = true;
+    if (!available && !activeTrip) return;
+    void Location.requestForegroundPermissionsAsync().then(permission => {
+      if (permission.status !== "granted") { setMessage("Activa el permiso de ubicación para trabajar."); return; }
+      return Location.watchPositionAsync({ accuracy: activeTrip ? Location.Accuracy.Highest : Location.Accuracy.Balanced, timeInterval: activeTrip ? 4_000 : 10_000, distanceInterval: activeTrip ? 5 : 20 }, location => {
+        const accuracy = location.coords.accuracy ?? undefined;
+        if (!mounted || (accuracy !== undefined && accuracy > 75)) return;
+        const point = { lat: location.coords.latitude, lng: location.coords.longitude, address: "Tu ubicación", accuracy, heading: safeHeading(location.coords.heading), capturedAt: new Date(location.timestamp).toISOString() };
+        const previous = lastAcceptedGps.current;
+        if (previous) {
+          const elapsed = Math.max(1, (Date.parse(point.capturedAt) - Date.parse(previous.capturedAt || point.capturedAt)) / 1_000);
+          const maxDistance = Math.max(90, elapsed * 42 + (previous.accuracy || 0) + (accuracy || 0));
+          const distance = gpsMeters(previous, point);
+          if (distance < 4 || distance > maxDistance) return;
+        }
+        lastAcceptedGps.current = point; setCurrent(point);
+        trackingQueue.current = { path: activeTrip ? `/trips/${activeTrip.id}/location` : "/riders/me/location", point };
+        flushTracking();
+      }).then(next => { subscription = next; });
+    }).catch(() => setMessage("No se pudo activar el GPS."));
+    return () => { mounted = false; subscription?.remove(); trackingQueue.current = null; };
+  }, [activeTrip?.id, available, flushTracking]);
   const toggle = async () => { try { await api("/riders/me/availability", { method: "PATCH", body: JSON.stringify({ available: !available }) }); await load(); } catch (error) { setMessage((error as Error).message); } };
   const content = () => { if (tab === "earnings") return <RiderEarnings onMessage={setMessage} />; if (tab === "history") return <TripHistory role="RIDER" onMessage={setMessage} />; if (tab === "account") return <RiderAccountScreen session={session} onMessage={setMessage} />; return <RiderWork available={available} ready={readiness} current={current} active={activeTrip} requests={requests} onToggle={toggle} onActive={setActiveTrip} onRequests={() => setRequestOpen(true)} onManageZone={() => setTab("account")} onMessage={setMessage} />; };
   return <Shell session={session} tab={tab} onTab={setTab} onLogout={onLogout}><Notice text={message} onDismiss={() => setMessage("")} />{content()}<RequestsModal visible={requestOpen} requests={requests} onClose={() => setRequestOpen(false)} onActive={setActiveTrip} onMessage={setMessage} /></Shell>;
