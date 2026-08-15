@@ -147,3 +147,18 @@ authRouter.get("/me", authenticate, async (req, res) => {
   });
   res.json(user);
 });
+
+const profileUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(100).optional(),
+  phone: z.string().trim().regex(/^\+?[0-9 ()-]{7,25}$/, "Ingresa un número de teléfono válido.").optional(),
+}).refine((value) => value.name !== undefined || value.phone !== undefined, { message: "Indica al menos un dato para actualizar." });
+
+authRouter.patch("/me", authenticate, async (req, res) => {
+  const data = profileUpdateSchema.parse(req.body);
+  const user = await prisma.user.update({
+    where: { id: req.user!.id },
+    data,
+    select: { id: true, name: true, email: true, role: true, status: true, phone: true, clientProfile: true },
+  });
+  res.json(user);
+});
