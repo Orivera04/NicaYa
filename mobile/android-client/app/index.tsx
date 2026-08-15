@@ -85,7 +85,7 @@ function CancelTripModal({ visible, onClose, onConfirm, busy }: { visible: boole
 }
 function useRoute(from?: Place | null, to?: Place | null) {
   const [route, setRoute] = useState<Place[]>([]);
-  useEffect(() => { let live = true; if (!from || !to) { setRoute([]); return; } void getRoute(from, to).then(result => { if (live) setRoute(result.points); }).catch(() => { if (live) setRoute([from, to]); }); return () => { live = false; }; }, [from?.lat, from?.lng, to?.lat, to?.lng]);
+  useEffect(() => { let live = true; if (!from || !to) { setRoute([]); return; } setRoute([]); void getRoute(from, to).then(result => { if (live) setRoute(result.points); }).catch(() => { if (live) setRoute([]); }); return () => { live = false; }; }, [from?.lat, from?.lng, to?.lat, to?.lng]);
   return route;
 }
 function useTripRealtime(trip: Trip | null, onTrip: (trip: Trip) => void, onOffer?: (offer: Offer) => void) {
