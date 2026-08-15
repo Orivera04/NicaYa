@@ -158,21 +158,6 @@ function RiderHome({ session, onLogout }: { session: Session; onLogout: () => vo
   const content = () => { if (tab === "earnings") return <RiderEarnings onMessage={setMessage} />; if (tab === "history") return <TripHistory role="RIDER" onMessage={setMessage} />; if (tab === "account") return <RiderAccountScreen session={session} onMessage={setMessage} />; return <RiderWork available={available} ready={readiness} current={current} active={activeTrip} requests={requests} onToggle={toggle} onActive={setActiveTrip} onRequests={() => setRequestOpen(true)} onManageZone={() => setTab("account")} onMessage={setMessage} />; };
   return <Shell session={session} tab={tab} onTab={setTab} onLogout={onLogout}><Notice text={message} onDismiss={() => setMessage("")} />{content()}<RequestsModal visible={requestOpen} requests={requests} onClose={() => setRequestOpen(false)} onActive={setActiveTrip} onMessage={setMessage} /></Shell>;
 }
-function InitialSplash() {
-  return <View style={styles.launchScreen}>
-    <StatusBar translucent backgroundColor={theme.ink} barStyle="light-content" />
-    <View style={styles.launchGlowTop} /><View style={styles.launchGlowBottom} />
-    <View style={styles.launchContent}>
-      <View style={styles.launchBadge}><Text style={styles.launchBadgeText}>M</Text></View>
-      <Text style={styles.launchBrand}>Moto<Text style={styles.orangeText}>Ya</Text></Text>
-      <Text style={styles.launchRole}>MOVILIDAD CONFIABLE</Text>
-      <View style={styles.launchRoute}><View style={styles.launchDot} /><View style={styles.launchRouteLine} /><View style={styles.launchMoto}><Text style={styles.launchMotoText}>🏍</Text></View></View>
-      <Text style={styles.launchTitle}>Tu ruta comienza{`\n`}con confianza.</Text>
-      <Text style={styles.launchCopy}>Estamos preparando tu experiencia MotoYa.</Text>
-    </View>
-    <View style={styles.launchFooter}><ActivityIndicator color={theme.orange} size="small" /><Text style={styles.launchLoading}>Cargando de forma segura</Text></View>
-  </View>;
-}
 function RiderWork({ available, ready, current, active, requests, onToggle, onActive, onRequests, onManageZone, onMessage }: { available: boolean; ready: Readiness; current: Place | null; active: Trip | null; requests: Trip[]; onToggle: () => void; onActive: (trip: Trip | null) => void; onRequests: () => void; onManageZone: () => void; onMessage: (message: string) => void }) {
   const routeTarget = active?.status === "IN_PROGRESS" ? { lat: active.destinationLat, lng: active.destinationLng, address: active.destinationAddress } : active ? { lat: active.originLat, lng: active.originLng, address: active.originAddress } : null;
   const route = useRoute(current, routeTarget); const [panelOpen, setPanelOpen] = useState(true); const [busy, setBusy] = useState(false);
@@ -207,9 +192,9 @@ function RequestsModal({ visible, requests, onClose, onActive, onMessage }: { vi
 
 export default function Index() {
   const [session, setCurrentSession] = useState<Session | null | undefined>(undefined);
-  useEffect(() => { let mounted = true; void restoreSession().then(restored => new Promise(resolve => setTimeout(resolve, 650)).then(() => { if (mounted) setCurrentSession(restored); })); return () => { mounted = false; }; }, []);
+  useEffect(() => { let mounted = true; void restoreSession().then(restored => { if (mounted) setCurrentSession(restored); }); return () => { mounted = false; }; }, []);
   const handleLogout = () => { void logout().finally(() => setCurrentSession(null)); };
-  if (session === undefined) return <InitialSplash />;
+  if (session === undefined) return <View style={styles.launchScreen} />;
   if (!session) return <Auth onSession={setCurrentSession} />;
   if (session.user.role === "ADMIN") return <SafeAreaView style={styles.safe}><Header session={session} onLogout={handleLogout} /><View style={styles.adminPlaceholder}><Text style={styles.eyebrow}>BACK-OFFICE</Text><Text style={styles.pageTitle}>Administración solo en web</Text><Text style={styles.pageSubtitle}>Por seguridad, aprobaciones, pagos, planes y configuración no se administran desde la aplicación móvil. Ingresa al portal web de MotoYa para continuar.</Text><Button title="Abrir administración web" onPress={() => void Linking.openURL("https://motoya-web-55ei.onrender.com/admin")} /><Button title="Cerrar sesión" tone="secondary" onPress={handleLogout} /></View></SafeAreaView>;
   return session.user.role === "RIDER" ? <RiderHome session={session} onLogout={handleLogout} /> : <ClientHome session={session} onLogout={handleLogout} />;
