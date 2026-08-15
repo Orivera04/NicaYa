@@ -21,6 +21,12 @@ export type Offer = { id: string; amount: string; currency: string; rider: { id?
 export type Quote = { estimatedPrice: number; minimumFare: number; maximumFare: number; currency: string; distanceKm: number; estimatedDurationMin: number };
 export type Readiness = { ready: boolean; blockers?: Array<{ code: string; message: string; action?: string }>; activeTrip?: Trip | null; workZone?: { department: string; lat: number; lng: number; updatedAt?: string } | null; subscription?: { plan?: string; expiresAt?: string; daysRemaining: number } | null; dailyQuota?: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
 
+export class MotoYaApiError extends Error {
+  constructor(public readonly status: number, public readonly code?: string, message = "No fue posible completar la acción.") {
+    super(message);
+    this.name = "MotoYaApiError";
+  }
+}
 const apiUrl = String(Constants.expoConfig?.extra?.apiUrl || "https://motoya-api.onrender.com/api").replace(/\/$/, "");
 const socketUrl = apiUrl.replace(/\/api$/, "");
 let current: Session | null = null;
@@ -49,10 +55,21 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       headers: { Accept: "application/json", "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}), ...(options.headers || {}) },
     });
   } catch {
-    throw new Error("No pudimos conectarnos con MotoYa. Verifica tu conexión e inténtalo de nuevo.");
+    // A transport failure has no HTTP status/code. Keep it distinct from the
+    // server-side rate-limit response so the user is not told to wait when
+    // the device simply could not reach the API.
+    throw new MotoYaApiError(0, "NETWORK_UNREACHABLE", "No pudimos contactar al servidor de MotoYa. Esto no es un límite de intentos; verifica tu conexión e inténtalo de nuevo.");
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error?.message || "No fue posible completar la acción.");
+  if (!response.ok) {
+    const code = typeof body?.error?.code === "string" ? body.error.code : undefined;
+    const message = typeof body?.error?.message === "string"
+      ? body.error.message
+      : response.status === 429
+        ? "Demasiados intentos. Espera unos minutos antes de volver a intentarlo."
+        : "No fue posible completar la acción.";
+    throw new MotoYaApiError(response.status, code, message);
+  }
   return body as T;
 }
 export const login = (email: string, password: string) => api<Session>("/auth/login", { method: "POST", body: JSON.stringify({ email, password, remember: true }) });
