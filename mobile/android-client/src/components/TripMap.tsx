@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { Camera, GeoJSONSource, Layer, Map, ViewAnnotation, type CameraRef, type LngLat } from "@maplibre/maplibre-react-native";
 import type { Place, Trip } from "../api";
 import { theme } from "../theme";
@@ -35,15 +35,19 @@ const PIN_DETAILS: Record<PinKind, { icon: string; label: string }> = {
   client: { icon: "●", label: "Pasajero" }
 };
 
-function Pin({ kind, text, onPress }: { kind: PinKind; text: string; onPress?: () => void }) {
+function Pin({ kind, text, onPress, pulsing = false }: { kind: PinKind; text: string; onPress?: () => void; pulsing?: boolean }) {
   const detail = PIN_DETAILS[kind];
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => { if (!pulsing) { pulse.stopAnimation(); pulse.setValue(0); return; } const animation = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 1050, useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 1050, useNativeDriver: true })])); animation.start(); return () => animation.stop(); }, [pulse, pulsing]);
+  const pulseStyle = { opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [.42, 0] }), transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.82] }) }] };
+  const markerStyle = pulsing ? { transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.075] }) }] } : undefined;
   return <Pressable accessibilityRole={onPress ? "button" : undefined} accessibilityLabel={`${detail.label}: ${text}`} disabled={!onPress} onPress={onPress} style={[styles.pin, styles[`pin_${kind}`], onPress && styles.pinInteractive]}>
-    <View style={[styles.pinIconWrap, styles[`pinIconWrap_${kind}`]]}><Text style={[styles.pinIcon, kind === "rider" && styles.riderPinIcon]}>{detail.icon}</Text></View>
+    {pulsing ? <Animated.View pointerEvents="none" style={[styles.pinPulse, kind === "rider" ? styles.pinPulse_rider : styles.pinPulse_client, pulseStyle]} /> : null}
+    <Animated.View style={markerStyle}><View style={[styles.pinIconWrap, styles[`pinIconWrap_${kind}`]]}><Text style={[styles.pinIcon, kind === "rider" && styles.riderPinIcon]}>{detail.icon}</Text></View></Animated.View>
     <Text numberOfLines={1} style={styles.pinLabel}>{text}</Text>
     <View style={[styles.pinPointer, styles[`pinPointer_${kind}`]]} />
   </Pressable>;
 }
-
 export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, fill = false, searching = false, hideLabel = false }: Props) {
   const cameraRef = useRef<CameraRef>(null);
   const [focused, setFocused] = useState(true);
@@ -68,8 +72,8 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
       {!searching && history.length > 1 ? <GeoJSONSource id="travelled-route" data={lineFeature(history)}><Layer id="travelled-route-line" type="line" paint={{ "line-color": theme.cyan, "line-width": 6, "line-opacity": 1 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
       {!searching && tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
       {!searching && tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
-      {!searching && rider ? <ViewAnnotation id="rider" lngLat={toLngLat(rider)} anchor="bottom"><Pin kind="rider" text="Moto" /></ViewAnnotation> : null}
-      {(searching || trip?.status === "RIDER_ON_THE_WAY") && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="client" text={searching ? "Tú" : "Pasajero"} onPress={onOriginPress} /></ViewAnnotation> : null}
+      {!searching && rider ? <ViewAnnotation id="rider" lngLat={toLngLat(rider)} anchor="bottom"><Pin kind="rider" text="Moto" pulsing={Boolean(trip)} /></ViewAnnotation> : null}
+      {(searching || trip?.status === "RIDER_ON_THE_WAY") && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="client" text={searching ? "Tú" : "Pasajero"} onPress={onOriginPress} pulsing={searching} /></ViewAnnotation> : null}
     </Map>
     {!hideLabel ? <View pointerEvents="none" style={styles.chip}><Text style={styles.chipText}>{label || (editable ? "Toca el mapa para corregir el destino" : trip?.status === "IN_PROGRESS" ? "Viaje en curso" : "Mapa en vivo")}</Text></View> : null}
     {!focused ? <Pressable accessibilityLabel="Centrar mapa" style={styles.focus} onPress={focus}><Text style={styles.focusText}>◎</Text></Pressable> : null}
@@ -84,7 +88,7 @@ const styles = StyleSheet.create({
   focus: { position: "absolute", right: 14, bottom: 14, width: 48, height: 48, borderRadius: 24, backgroundColor: theme.panel, alignItems: "center", justifyContent: "center", elevation: 6 },
   focusText: { color: theme.white, fontSize: 26, lineHeight: 30 },
   pin: { minWidth: 55, alignItems: "center", justifyContent: "center", elevation: 8, shadowColor: "#00143F", shadowOpacity: .32, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } },
-  pin_origin: {}, pin_destination: {}, pin_rider: {}, pin_client: {},
+  pin_origin: {}, pin_destination: {}, pin_rider: {}, pin_client: {}, pinPulse: { position: "absolute", top: 1, width: 48, height: 48, borderRadius: 24, borderWidth: 2 }, pinPulse_client: { borderColor: theme.violet, backgroundColor: "rgba(157,78,221,.22)" }, pinPulse_rider: { borderColor: "#176BDE", backgroundColor: "rgba(23,107,222,.20)" },
   pinIconWrap: { width: 48, height: 48, borderRadius: 19, borderWidth: 3, borderColor: theme.white, alignItems: "center", justifyContent: "center" },
   pinIconWrap_origin: { backgroundColor: "#0C9B8B" }, pinIconWrap_destination: { backgroundColor: theme.orange }, pinIconWrap_rider: { backgroundColor: "#176BDE" }, pinIconWrap_client: { backgroundColor: theme.violet },
   pinIcon: { color: theme.white, fontSize: 21, fontWeight: "900", lineHeight: 25 }, riderPinIcon: { fontSize: 22 },
