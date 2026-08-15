@@ -19,6 +19,7 @@ type Props = {
   fill?: boolean;
   searching?: boolean;
   hideLabel?: boolean;
+  followPoint?: Place | null;
 };
 
 type MapPoint = { lat: number; lng: number };
@@ -48,25 +49,29 @@ function Pin({ kind, text, onPress, pulsing = false }: { kind: PinKind; text: st
     <View style={[styles.pinPointer, styles[`pinPointer_${kind}`]]} />
   </Pressable>;
 }
-export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, fill = false, searching = false, hideLabel = false }: Props) {
+export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, fill = false, searching = false, hideLabel = false, followPoint }: Props) {
   const cameraRef = useRef<CameraRef>(null);
   const [focused, setFocused] = useState(true);
   const tripOrigin = trip ? { lat: trip.originLat, lng: trip.originLng, address: trip.originAddress } : origin;
   const tripDestination = trip ? { lat: trip.destinationLat, lng: trip.destinationLng, address: trip.destinationAddress } : destination;
-  const rider = trip?.riderLat != null && trip?.riderLng != null ? { lat: trip.riderLat, lng: trip.riderLng, address: "Rider" } : currentLocation;
+  const rider = currentLocation || (trip?.riderLat != null && trip?.riderLng != null ? { lat: trip.riderLat, lng: trip.riderLng, address: "Rider" } : null);
   const history = useMemo(() => (trip?.locations || []).map(point => ({ lat: point.lat, lng: point.lng })), [trip?.locations]);
   const planned = useMemo(() => route.map(point => ({ lat: point.lat, lng: point.lng })), [route]);
   const focusPoints = useMemo(() => [tripOrigin, searching ? undefined : tripDestination, searching ? undefined : rider].filter(Boolean) as Place[], [tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng, rider?.lat, rider?.lng, searching]);
+  const liveFocus = followPoint || rider || (searching ? tripOrigin : undefined);
   const focus = () => {
-    if (!focusPoints.length) return;
     setFocused(true);
+    // During live tracking keep the rider or passenger centered instead of
+    // zooming out to fit the full route.
+    if (liveFocus) { cameraRef.current?.easeTo({ center: toLngLat(liveFocus), zoom: 16, duration: 450, easing: "ease" }); return; }
+    if (!focusPoints.length) return;
     if (focusPoints.length === 1) { cameraRef.current?.easeTo({ center: toLngLat(focusPoints[0]), zoom: 16, duration: 450, easing: "ease" }); return; }
     const lats = focusPoints.map(point => point.lat); const lngs = focusPoints.map(point => point.lng);
     // Keep the trip points in frame, but use a tighter viewport so the rider and
     // the next part of the route remain legible on a phone screen.
     cameraRef.current?.fitBounds([Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)], { padding: { top: 48, right: 30, bottom: 96, left: 30 }, duration: 550, easing: "ease" });
   };
-  useEffect(() => { const timeout = setTimeout(focus, 300); return () => clearTimeout(timeout); }, [trip?.id, trip?.status, rider?.lat, rider?.lng, tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng]);
+  useEffect(() => { const timeout = setTimeout(focus, 300); return () => clearTimeout(timeout); }, [trip?.id, trip?.status, liveFocus?.lat, liveFocus?.lng, tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng]);
   return <View style={[styles.shell, fill ? styles.shellFill : { height }]}>
     <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => { if (!editable || !onMapPress) return; const [lng, lat] = event.nativeEvent.lngLat; onMapPress({ lat, lng, address: "Ubicación seleccionada" }); }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFocused(false); }}>
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
