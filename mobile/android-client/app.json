@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "scheme": "motoya",
     "userInterfaceStyle": "light",
+    "splash": { "backgroundColor": "#070B1C", "resizeMode": "contain" },
     "android": {
       "package": "ni.motoya.android",
       "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
