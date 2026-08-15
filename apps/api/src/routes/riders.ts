@@ -68,6 +68,18 @@ ridersRouter.get("/me", async (req, res) => {
 });
 ridersRouter.get("/me/activation", async (req, res) => res.json(await activation(req.user!.id)));
 ridersRouter.get("/me/readiness", async (req, res) => res.json(await readiness(req.user!.id)));
+ridersRouter.get("/me/active-trip", async (req, res) => {
+  const trip = await prisma.trip.findFirst({
+    where: { riderId: req.user!.id, status: { in: ["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"] } },
+    include: {
+      client: { select: { id: true, name: true, phone: true } },
+      rider: { select: { id: true, name: true, phone: true, riderProfile: { select: { vehicleModel: true, vehiclePlate: true } } } },
+      locations: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 720 },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  res.json(trip);
+});
 ridersRouter.patch("/me/onboarding/profile", async (req, res) => { const data = profileSchema.parse(req.body); await prisma.riderProfile.update({ where: { userId: req.user!.id }, data: { ...data, onboardingStatus: "DOCUMENTS_PENDING" } }); res.json(await activation(req.user!.id)); });
 ridersRouter.post("/me/work-zone/detect", async (req, res) => { const data = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).parse(req.body); let department = "Zona detectada"; try { const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${data.lat}&lon=${data.lng}&format=jsonv2&zoom=10`, { headers: { "User-Agent": "MotoYa-MVP/1.0" } }); const place = await response.json() as { address?: Record<string, string> }; department = place.address?.state || place.address?.county || place.address?.city || department; } catch {} res.json({ department, ...data }); });
 ridersRouter.patch("/me/work-zone", async (req, res) => { const data = z.object({ department: z.string().trim().min(2).max(80), lat: z.number(), lng: z.number(), reason: z.enum(["INITIAL", "MANUAL_CHANGE", "OUTSIDE_ZONE"]).default("MANUAL_CHANGE") }).parse(req.body); const rider = await prisma.riderProfile.findUniqueOrThrow({ where: { userId: req.user!.id } }); await prisma.$transaction(async (tx) => { await tx.riderProfile.update({ where: { id: rider.id }, data: { workZoneConfigured: true, workZoneDepartment: data.department, workZoneLat: data.lat, workZoneLng: data.lng, workZoneUpdatedAt: new Date() } }); await tx.workZoneHistory.create({ data: { riderId: rider.id, department: data.department, lat: data.lat, lng: data.lng, reason: data.reason } }); }); res.json(await activation(req.user!.id)); });
