@@ -49,7 +49,20 @@ async function readiness(userId: string) {
   if (!documentsValid) blockers.push({ code: "DOCUMENTS_INVALID", message: "Debes tener los cuatro documentos aprobados y el seguro vigente.", action: "Revisar expediente" });
   if (!rider.subscriptions.length) blockers.push({ code: "SUBSCRIPTION_REQUIRED", message: "Necesitas una suscripción vigente para recibir solicitudes.", action: "Ver suscripción" });
   if (!rider.workZoneConfigured || rider.workZoneLat === null || rider.workZoneLng === null) blockers.push({ code: "WORK_ZONE_REQUIRED", message: "Configura tu zona de trabajo y comparte tu ubicación.", action: "Configurar zona" });
-  const activeTrip = await prisma.trip.findFirst({ where: { riderId: userId, status: { in: ["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"] } }, select: { id: true, status: true } });
+  // Readiness is the first reliable workspace response. Include the data needed
+  // to resume the active trip so the app never depends on a second request.
+  const activeTrip = await prisma.trip.findFirst({
+    where: { riderId: userId, status: { in: ["ACCEPTED", "RIDER_ON_THE_WAY", "RIDER_ARRIVED", "IN_PROGRESS"] } },
+    select: {
+      id: true, status: true, originAddress: true, destinationAddress: true,
+      originLat: true, originLng: true, destinationLat: true, destinationLng: true,
+      estimatedPrice: true, finalPrice: true, proposedPrice: true, currency: true,
+      distanceKm: true, estimatedDurationMin: true, riderLat: true, riderLng: true,
+      createdAt: true,
+      client: { select: { name: true, phone: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
   if (activeTrip) blockers.push({ code: "ACTIVE_TRIP", message: "Tienes un viaje activo. Finalízalo antes de aceptar otro.", action: "Ver viaje" });
   const subscription = rider.subscriptions[0];
   const dailyTripLimit = subscription?.plan?.dailyTripLimit ?? null;

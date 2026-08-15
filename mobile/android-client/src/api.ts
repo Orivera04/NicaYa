@@ -19,7 +19,7 @@ export type Trip = {
 };
 export type Offer = { id: string; amount: string; currency: string; rider: { id?: string; name: string } };
 export type Quote = { estimatedPrice: number; minimumFare: number; maximumFare: number; currency: string; distanceKm: number; estimatedDurationMin: number };
-export type Readiness = { ready: boolean; blockers?: Array<{ code: string; message: string; action?: string }>; activeTrip?: { id: string } | null; workZone?: { department: string; lat: number; lng: number; updatedAt?: string } | null; subscription?: { plan?: string; expiresAt?: string; daysRemaining: number } | null; dailyQuota?: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
+export type Readiness = { ready: boolean; blockers?: Array<{ code: string; message: string; action?: string }>; activeTrip?: Trip | null; workZone?: { department: string; lat: number; lng: number; updatedAt?: string } | null; subscription?: { plan?: string; expiresAt?: string; daysRemaining: number } | null; dailyQuota?: { limit: number; completed: number; remaining: number; resetsAt: string } | null };
 
 const apiUrl = String(Constants.expoConfig?.extra?.apiUrl || "https://motoya-api.onrender.com/api").replace(/\/$/, "");
 const socketUrl = apiUrl.replace(/\/api$/, "");
