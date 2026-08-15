@@ -16,6 +16,7 @@ type Props = {
   onDestinationPress?: () => void;
   label?: string;
   height?: number;
+  fill?: boolean;
   searching?: boolean;
   hideLabel?: boolean;
 };
@@ -43,7 +44,7 @@ function Pin({ kind, text, onPress }: { kind: PinKind; text: string; onPress?: (
   </Pressable>;
 }
 
-export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, searching = false, hideLabel = false }: Props) {
+export function TripMap({ trip, origin, destination, currentLocation, route = [], editable = false, onMapPress, onOriginPress, onDestinationPress, label, height = 340, fill = false, searching = false, hideLabel = false }: Props) {
   const cameraRef = useRef<CameraRef>(null);
   const [focused, setFocused] = useState(true);
   const tripOrigin = trip ? { lat: trip.originLat, lng: trip.originLng, address: trip.originAddress } : origin;
@@ -60,7 +61,7 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
     cameraRef.current?.fitBounds([Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)], { padding: { top: 70, right: 58, bottom: 130, left: 58 }, duration: 550, easing: "ease" });
   };
   useEffect(() => { const timeout = setTimeout(focus, 300); return () => clearTimeout(timeout); }, [trip?.id, trip?.status, rider?.lat, rider?.lng, tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng]);
-  return <View style={[styles.shell, { height }]}>
+  return <View style={[styles.shell, fill ? styles.shellFill : { height }]}>
     <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => { if (!editable || !onMapPress) return; const [lng, lat] = event.nativeEvent.lngLat; onMapPress({ lat, lng, address: "Punto seleccionado en el mapa" }); }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFocused(false); }}>
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
       {!searching && planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-line" type="line" paint={{ "line-color": theme.violet, "line-width": 5, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
@@ -77,6 +78,7 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
 
 const styles = StyleSheet.create({
   shell: { overflow: "hidden", borderRadius: 28, backgroundColor: "#DCE9E3", marginVertical: 14 },
+  shellFill: { flex: 1, marginVertical: 0, borderRadius: 0 },
   chip: { position: "absolute", top: 14, left: 14, right: 68, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: "rgba(7,11,28,.88)" },
   chipText: { color: theme.white, fontSize: 12, fontWeight: "800" },
   focus: { position: "absolute", right: 14, bottom: 14, width: 48, height: 48, borderRadius: 24, backgroundColor: theme.panel, alignItems: "center", justifyContent: "center", elevation: 6 },
