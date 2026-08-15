@@ -16,7 +16,7 @@ export const authRouter = safeRouter();
 // session state and must not consume the login-attempt budget.
 const credentialLimiter = rateLimit({
   windowMs: 15 * 60_000,
-  max: 10,
+  max: 100,
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
