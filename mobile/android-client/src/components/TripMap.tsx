@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
-import { Camera, GeoJSONSource, Layer, Map, ViewAnnotation, type CameraRef, type LngLat } from "@maplibre/maplibre-react-native";
+import { Camera, GeoJSONSource, Layer, Map, Marker, ViewAnnotation, type CameraRef, type LngLat } from "@maplibre/maplibre-react-native";
 import { getRouteMatch, type Place, type Trip } from "../api";
 import { theme } from "../theme";
 
@@ -32,7 +32,6 @@ const MAX_TRACK_ACCURACY_METERS = 75;
 const toLngLat = (place: MapPoint): LngLat => [place.lng, place.lat];
 const lineFeature = (points: MapPoint[]) => ({ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: points.map(toLngLat) } });
 const multiLineFeature = (segments: MapPoint[][]) => ({ type: "Feature" as const, properties: {}, geometry: { type: "MultiLineString" as const, coordinates: segments.map(segment => segment.map(toLngLat)) } });
-const pointFeature = (point: MapPoint) => ({ type: "Feature" as const, properties: {}, geometry: { type: "Point" as const, coordinates: toLngLat(point) } });
 const toRadians = (degrees: number) => degrees * Math.PI / 180;
 const toDegrees = (radians: number) => radians * 180 / Math.PI;
 const normalizeBearing = (bearing: number) => (bearing % 360 + 360) % 360;
@@ -186,16 +185,10 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
       {!searching && planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-glow" type="line" paint={{ "line-color": "#3BA7FF", "line-width": 14, "line-opacity": .2, "line-blur": 3 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-outline" type="line" paint={{ "line-color": "#1265E4", "line-width": 9, "line-opacity": .98 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 3, "line-opacity": .98, "line-dasharray": [1.1, .72] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
       {!searching && travelledTrack.length ? <GeoJSONSource id="travelled-route" data={multiLineFeature(travelledTrack)}><Layer id="travelled-route-shadow" type="line" paint={{ "line-color": "#7D3AC7", "line-width": 11, "line-opacity": .18, "line-blur": 2 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-outline" type="line" paint={{ "line-color": "#8E4AD0", "line-width": 7, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 2.5, "line-opacity": .96, "line-dasharray": [1, 1] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
-      {!searching && renderedRider ? <GeoJSONSource id="rider-navigation-marker" data={pointFeature(renderedRider)}>
-        <Layer id="rider-navigation-shadow" type="circle" paint={{ "circle-radius": 33, "circle-color": "#176BDE", "circle-opacity": .16, "circle-blur": .45 }} />
-        <Layer id="rider-navigation-body" type="circle" paint={{ "circle-radius": 25, "circle-color": "#176BDE", "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 3 }} />
-        <Layer id="rider-navigation-badge" type="circle" paint={{ "circle-radius": 19, "circle-color": "#070B1C", "circle-translate": [0, 39] }} />
-        <Layer id="rider-navigation-icon" type="symbol" layout={{ "text-field": "🏍", "text-size": 19, "text-allow-overlap": true, "text-ignore-placement": true }} />
-        <Layer id="rider-navigation-label" type="symbol" layout={{ "text-field": "Moto", "text-size": 11, "text-font": ["Noto Sans Bold"], "text-offset": [0, 3.55], "text-anchor": "center", "text-allow-overlap": true, "text-ignore-placement": true }} paint={{ "text-color": "#FFFFFF" }} />
-      </GeoJSONSource> : null}
       {!searching && tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
       {!searching && tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
       {!searching && riderStart && (!renderedRider || metersBetween(riderStart, renderedRider) > 14) ? <ViewAnnotation id="rider-start" lngLat={toLngLat(riderStart)} anchor="bottom"><Pin kind="riderStart" text="Inicio rider" /></ViewAnnotation> : null}
+      {!searching && renderedRider ? <Marker id="rider" lngLat={toLngLat(renderedRider)} anchor="bottom"><Pin kind="rider" text="Moto" pulsing={Boolean(trip)} /></Marker> : null}
       {(searching || trip?.status === "RIDER_ON_THE_WAY") && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="client" text={searching ? "Tú" : "Pasajero"} onPress={onOriginPress} pulsing={searching} /></ViewAnnotation> : null}
     </Map>
     {!hideLabel ? <View pointerEvents="none" style={styles.chip}><Text style={styles.chipText}>{label || (editable ? "Toca el mapa para corregir el destino" : trip?.status === "IN_PROGRESS" ? "Viaje en curso" : "Mapa en vivo")}</Text></View> : null}
