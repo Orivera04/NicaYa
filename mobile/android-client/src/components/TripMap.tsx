@@ -32,6 +32,17 @@ const MAX_TRACK_ACCURACY_METERS = 75;
 const toLngLat = (place: MapPoint): LngLat => [place.lng, place.lat];
 const lineFeature = (points: MapPoint[]) => ({ type: "Feature" as const, properties: {}, geometry: { type: "LineString" as const, coordinates: points.map(toLngLat) } });
 const multiLineFeature = (segments: MapPoint[][]) => ({ type: "Feature" as const, properties: {}, geometry: { type: "MultiLineString" as const, coordinates: segments.map(segment => segment.map(toLngLat)) } });
+const cutMarkerHalo = (segments: MapPoint[][], marker: MapPoint | null, radiusMeters = 27) => {
+  if (!marker) return segments;
+  return segments.flatMap(segment => {
+    const parts: MapPoint[][] = []; let part: MapPoint[] = [];
+    for (const point of segment) {
+      if (metersBetween(point, marker) < radiusMeters) { if (part.length > 1) parts.push(part); part = []; }
+      else part.push(point);
+    }
+    if (part.length > 1) parts.push(part); return parts;
+  });
+};
 const toRadians = (degrees: number) => degrees * Math.PI / 180;
 const toDegrees = (radians: number) => radians * 180 / Math.PI;
 const normalizeBearing = (bearing: number) => (bearing % 360 + 360) % 360;
@@ -153,6 +164,9 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   const riderStart = useMemo<LivePlace | null>(() => trip?.startLocation ? trip.startLocation as LivePlace : history[0] ? { ...history[0], address: "Inicio del rider" } : null, [trip?.startLocation, history]);
   const planned = useMemo(() => route.map(point => ({ lat: point.lat, lng: point.lng })), [route]);
   const renderedRider = useInterpolatedRider(rider);
+  // Reserve a small transparent halo around the live marker so no route can render through the motorcycle icon.
+  const protectedPlanned = useMemo(() => cutMarkerHalo(planned.length > 1 ? [planned] : [], renderedRider), [planned, renderedRider?.lat, renderedRider?.lng]);
+  const protectedTravelled = useMemo(() => cutMarkerHalo(travelledTrack, renderedRider), [travelledTrack, renderedRider?.lat, renderedRider?.lng]);
   const liveFocus = useMemo(() => followPoint || rider || (searching ? tripOrigin : undefined), [followPoint?.lat, followPoint?.lng, rider?.lat, rider?.lng, searching, tripOrigin?.lat, tripOrigin?.lng]);
   const focusPoints = useMemo(() => [tripOrigin, searching ? undefined : tripDestination].filter(Boolean) as Place[], [tripOrigin?.lat, tripOrigin?.lng, tripDestination?.lat, tripDestination?.lng, searching]);
   const derivedHeading = history.length >= 2 && metersBetween(history.at(-2)!, history.at(-1)!) >= 7 ? bearingBetween(history.at(-2)!, history.at(-1)!) : undefined;
@@ -176,8 +190,8 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   return <View style={[styles.shell, fill ? styles.shellFill : { height }]}>
     <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => { if (!editable || !onMapPress) return; const [lng, lat] = event.nativeEvent.lngLat; onMapPress({ lat, lng, address: "Ubicación seleccionada" }); }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFollowing(false); }}>
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
-      {!searching && planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-glow" type="line" paint={{ "line-color": "#3BA7FF", "line-width": 14, "line-opacity": .2, "line-blur": 3 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-outline" type="line" paint={{ "line-color": "#1265E4", "line-width": 9, "line-opacity": .98 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 3, "line-opacity": .98, "line-dasharray": [1.1, .72] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
-      {!searching && travelledTrack.length ? <GeoJSONSource id="travelled-route" data={multiLineFeature(travelledTrack)}><Layer id="travelled-route-shadow" type="line" paint={{ "line-color": "#7D3AC7", "line-width": 11, "line-opacity": .18, "line-blur": 2 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-outline" type="line" paint={{ "line-color": "#8E4AD0", "line-width": 7, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 2.5, "line-opacity": .96, "line-dasharray": [1, 1] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
+      {!searching && protectedPlanned.length ? <GeoJSONSource id="planned-route" data={multiLineFeature(protectedPlanned)}><Layer id="planned-route-glow" type="line" paint={{ "line-color": "#3BA7FF", "line-width": 14, "line-opacity": .2, "line-blur": 3 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-outline" type="line" paint={{ "line-color": "#1265E4", "line-width": 9, "line-opacity": .98 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 3, "line-opacity": .98, "line-dasharray": [1.1, .72] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
+      {!searching && protectedTravelled.length ? <GeoJSONSource id="travelled-route" data={multiLineFeature(protectedTravelled)}><Layer id="travelled-route-shadow" type="line" paint={{ "line-color": "#7D3AC7", "line-width": 11, "line-opacity": .18, "line-blur": 2 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-outline" type="line" paint={{ "line-color": "#8E4AD0", "line-width": 7, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 2.5, "line-opacity": .96, "line-dasharray": [1, 1] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
       {!searching && tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
       {!searching && tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
       {!searching && riderStart && (!renderedRider || metersBetween(riderStart, renderedRider) > 14) ? <ViewAnnotation id="rider-start" lngLat={toLngLat(riderStart)} anchor="bottom"><Pin kind="riderStart" text="Inicio rider" /></ViewAnnotation> : null}
