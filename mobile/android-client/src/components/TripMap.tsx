@@ -24,7 +24,7 @@ type Props = {
 
 type MapPoint = { lat: number; lng: number };
 type LivePlace = Place & { accuracy?: number | null; heading?: number | null; capturedAt?: string; createdAt?: string };
-type PinKind = "origin" | "destination" | "rider" | "client";
+type PinKind = "origin" | "destination" | "rider" | "riderStart" | "client";
 const MAP_STYLE = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json";
 const DEFAULT_CENTER: LngLat = [-86.2514, 12.1364];
 const NAVIGATION_ZOOM = 16.2;
@@ -85,7 +85,7 @@ function useMatchedTrack(points: MapPoint[]) {
   useEffect(() => {
     if (recent.length < 2) { setSegments([]); return; }
     const last = recent.at(-1)!; const previousRequest = requestRef.current;
-    if (previousRequest && Date.now() - previousRequest.at < 12_000 && metersBetween(previousRequest.point, last) < 30) return;
+    if (previousRequest && Date.now() - previousRequest.at < 3_000 && metersBetween(previousRequest.point, last) < 12) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       requestRef.current = { point: last, at: Date.now() };
@@ -119,7 +119,7 @@ function useInterpolatedRider(target: LivePlace | null) {
 }
 
 const PIN_DETAILS: Record<PinKind, { icon: string; label: string }> = {
-  origin: { icon: "↑", label: "Salida" }, destination: { icon: "⌖", label: "Destino" }, rider: { icon: "🏍", label: "Moto" }, client: { icon: "●", label: "Pasajero" }
+  origin: { icon: "↑", label: "Salida" }, destination: { icon: "⌖", label: "Destino" }, rider: { icon: "🏍", label: "Moto" }, riderStart: { icon: "↗", label: "Inicio rider" }, client: { icon: "●", label: "Pasajero" }
 };
 
 function Pin({ kind, text, onPress, pulsing = false }: { kind: PinKind; text: string; onPress?: () => void; pulsing?: boolean }) {
@@ -139,9 +139,18 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
   const tripOrigin = trip ? { lat: trip.originLat, lng: trip.originLng, address: trip.originAddress } : origin;
   const tripDestination = trip ? { lat: trip.destinationLat, lng: trip.destinationLng, address: trip.destinationAddress } : destination;
   const rider = useMemo<LivePlace | null>(() => (currentLocation || (trip?.riderLat != null && trip?.riderLng != null ? { lat: trip.riderLat, lng: trip.riderLng, address: "Rider", heading: trip.riderHeading ?? undefined } : null)) as LivePlace | null, [currentLocation?.lat, currentLocation?.lng, (currentLocation as LivePlace | null)?.heading, (currentLocation as LivePlace | null)?.capturedAt, trip?.riderLat, trip?.riderLng, trip?.riderHeading]);
-  const rawHistory = useMemo(() => (trip?.locations || []) as LivePlace[], [trip?.locations]);
+  const rawHistory = useMemo(() => {
+    const locations = (trip?.locations || []) as LivePlace[]; const start = trip?.startLocation as LivePlace | null | undefined;
+    if (!start) return locations;
+    const first = locations[0];
+    return first && metersBetween(start, first) < 3 ? locations : [start, ...locations];
+  }, [trip?.locations, trip?.startLocation]);
   const history = useMemo(() => cleanTrack(rawHistory), [rawHistory]);
   const matchedTrack = useMatchedTrack(history);
+  // Only render geometry returned by the road matcher. Raw GPS positions move
+  // the marker immediately, but never create a diagonal trace off the street.
+  const travelledTrack = matchedTrack;
+  const riderStart = useMemo<LivePlace | null>(() => trip?.startLocation ? trip.startLocation as LivePlace : history[0] ? { ...history[0], address: "Inicio del rider" } : null, [trip?.startLocation, history]);
   const planned = useMemo(() => route.map(point => ({ lat: point.lat, lng: point.lng })), [route]);
   const renderedRider = useInterpolatedRider(rider);
   const liveFocus = useMemo(() => followPoint || rider || (searching ? tripOrigin : undefined), [followPoint?.lat, followPoint?.lng, rider?.lat, rider?.lng, searching, tripOrigin?.lat, tripOrigin?.lng]);
@@ -168,9 +177,10 @@ export function TripMap({ trip, origin, destination, currentLocation, route = []
     <Map style={StyleSheet.absoluteFill} mapStyle={MAP_STYLE} logo={false} attribution androidView="texture" compass tintColor={theme.panel} onPress={event => { if (!editable || !onMapPress) return; const [lng, lat] = event.nativeEvent.lngLat; onMapPress({ lat, lng, address: "Ubicación seleccionada" }); }} onRegionWillChange={event => { if (event.nativeEvent.userInteraction) setFollowing(false); }}>
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: 11 }} />
       {!searching && planned.length > 1 ? <GeoJSONSource id="planned-route" data={lineFeature(planned)}><Layer id="planned-route-glow" type="line" paint={{ "line-color": "#3BA7FF", "line-width": 14, "line-opacity": .2, "line-blur": 3 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-outline" type="line" paint={{ "line-color": "#1265E4", "line-width": 9, "line-opacity": .98 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="planned-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 3, "line-opacity": .98, "line-dasharray": [1.1, .72] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
-      {!searching && matchedTrack.length ? <GeoJSONSource id="travelled-route" data={multiLineFeature(matchedTrack)}><Layer id="travelled-route-shadow" type="line" paint={{ "line-color": "#7D3AC7", "line-width": 11, "line-opacity": .18, "line-blur": 2 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-outline" type="line" paint={{ "line-color": "#8E4AD0", "line-width": 7, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 2.5, "line-opacity": .96, "line-dasharray": [1, 1] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
+      {!searching && travelledTrack.length ? <GeoJSONSource id="travelled-route" data={multiLineFeature(travelledTrack)}><Layer id="travelled-route-shadow" type="line" paint={{ "line-color": "#7D3AC7", "line-width": 11, "line-opacity": .18, "line-blur": 2 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-outline" type="line" paint={{ "line-color": "#8E4AD0", "line-width": 7, "line-opacity": .9 }} layout={{ "line-cap": "round", "line-join": "round" }} /><Layer id="travelled-route-core" type="line" paint={{ "line-color": "#FFFFFF", "line-width": 2.5, "line-opacity": .96, "line-dasharray": [1, 1] }} layout={{ "line-cap": "round", "line-join": "round" }} /></GeoJSONSource> : null}
       {!searching && tripOrigin ? <ViewAnnotation id="origin" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="origin" text="Salida" onPress={onOriginPress} /></ViewAnnotation> : null}
       {!searching && tripDestination ? <ViewAnnotation id="destination" lngLat={toLngLat(tripDestination)} anchor="bottom"><Pin kind="destination" text="Destino" onPress={onDestinationPress} /></ViewAnnotation> : null}
+      {!searching && riderStart && (!renderedRider || metersBetween(riderStart, renderedRider) > 14) ? <ViewAnnotation id="rider-start" lngLat={toLngLat(riderStart)} anchor="bottom"><Pin kind="riderStart" text="Inicio rider" /></ViewAnnotation> : null}
       {!searching && renderedRider ? <ViewAnnotation id="rider" lngLat={toLngLat(renderedRider)} anchor="bottom"><Pin kind="rider" text="Moto" pulsing={Boolean(trip)} /></ViewAnnotation> : null}
       {(searching || trip?.status === "RIDER_ON_THE_WAY") && tripOrigin ? <ViewAnnotation id="client" lngLat={toLngLat(tripOrigin)} anchor="bottom"><Pin kind="client" text={searching ? "Tú" : "Pasajero"} onPress={onOriginPress} pulsing={searching} /></ViewAnnotation> : null}
     </Map>
@@ -183,7 +193,7 @@ const styles = StyleSheet.create({
   shell: { overflow: "hidden", borderRadius: 28, backgroundColor: "#DCE9E3", marginVertical: 14 }, shellFill: { flex: 1, marginVertical: 0, borderRadius: 0 },
   chip: { position: "absolute", top: 14, left: 14, right: 68, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: "rgba(7,11,28,.88)" }, chipText: { color: theme.white, fontSize: 12, fontWeight: "800" },
   focus: { position: "absolute", right: 14, bottom: 14, minHeight: 46, paddingHorizontal: 14, borderRadius: 23, backgroundColor: theme.panel, alignItems: "center", justifyContent: "center", elevation: 6 }, focusText: { color: theme.white, fontSize: 12, fontWeight: "900" },
-  pin: { minWidth: 55, alignItems: "center", justifyContent: "center", elevation: 8, shadowColor: "#00143F", shadowOpacity: .32, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }, pin_origin: {}, pin_destination: {}, pin_rider: {}, pin_client: {}, pinPulse: { position: "absolute", top: 1, width: 48, height: 48, borderRadius: 24, borderWidth: 2 }, pinPulse_client: { borderColor: theme.violet, backgroundColor: "rgba(157,78,221,.22)" }, pinPulse_rider: { borderColor: "#176BDE", backgroundColor: "rgba(23,107,222,.20)" },
-  pinIconWrap: { width: 48, height: 48, borderRadius: 19, borderWidth: 3, borderColor: theme.white, alignItems: "center", justifyContent: "center" }, pinIconWrap_origin: { backgroundColor: "#0C9B8B" }, pinIconWrap_destination: { backgroundColor: theme.orange }, pinIconWrap_rider: { backgroundColor: "#176BDE" }, pinIconWrap_client: { backgroundColor: theme.violet }, pinIcon: { color: theme.white, fontSize: 21, fontWeight: "900", lineHeight: 25 }, riderPinIcon: { fontSize: 22 },
-  pinLabel: { maxWidth: 72, marginTop: -1, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 9, overflow: "hidden", color: theme.white, backgroundColor: "rgba(7,11,28,.92)", fontSize: 10, fontWeight: "900", textAlign: "center" }, pinPointer: { width: 0, height: 0, marginTop: -1, borderLeftWidth: 7, borderRightWidth: 7, borderTopWidth: 8, borderLeftColor: "transparent", borderRightColor: "transparent" }, pinPointer_origin: { borderTopColor: "#0C9B8B" }, pinPointer_destination: { borderTopColor: theme.orange }, pinPointer_rider: { borderTopColor: "#176BDE" }, pinPointer_client: { borderTopColor: theme.violet }, pinInteractive: { transform: [{ scale: 1.05 }] }
+  pin: { minWidth: 55, alignItems: "center", justifyContent: "center", elevation: 20, zIndex: 20, shadowColor: "#00143F", shadowOpacity: .32, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } }, pin_origin: {}, pin_destination: {}, pin_rider: { zIndex: 30 }, pin_riderStart: {}, pin_client: {}, pinPulse: { position: "absolute", top: 1, width: 48, height: 48, borderRadius: 24, borderWidth: 2 }, pinPulse_client: { borderColor: theme.violet, backgroundColor: "rgba(157,78,221,.22)" }, pinPulse_rider: { borderColor: "#176BDE", backgroundColor: "rgba(23,107,222,.20)" },
+  pinIconWrap: { width: 48, height: 48, borderRadius: 19, borderWidth: 3, borderColor: theme.white, alignItems: "center", justifyContent: "center" }, pinIconWrap_origin: { backgroundColor: "#0C9B8B" }, pinIconWrap_destination: { backgroundColor: theme.orange }, pinIconWrap_rider: { backgroundColor: "#176BDE" }, pinIconWrap_riderStart: { backgroundColor: "#314265" }, pinIconWrap_client: { backgroundColor: theme.violet }, pinIcon: { color: theme.white, fontSize: 21, fontWeight: "900", lineHeight: 25 }, riderPinIcon: { fontSize: 22 },
+  pinLabel: { maxWidth: 72, marginTop: -1, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 9, overflow: "hidden", color: theme.white, backgroundColor: "rgba(7,11,28,.92)", fontSize: 10, fontWeight: "900", textAlign: "center" }, pinPointer: { width: 0, height: 0, marginTop: -1, borderLeftWidth: 7, borderRightWidth: 7, borderTopWidth: 8, borderLeftColor: "transparent", borderRightColor: "transparent" }, pinPointer_origin: { borderTopColor: "#0C9B8B" }, pinPointer_destination: { borderTopColor: theme.orange }, pinPointer_rider: { borderTopColor: "#176BDE" }, pinPointer_riderStart: { borderTopColor: "#314265" }, pinPointer_client: { borderTopColor: theme.violet }, pinInteractive: { transform: [{ scale: 1.05 }] }
 });
