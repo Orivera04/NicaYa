@@ -310,6 +310,7 @@ model Trip {
  riderHeading Float?
  riderLocationUpdatedAt DateTime?
  status TripStatus @default(REQUESTED)
+ pickupCode String?
  originLat Float
  originLng Float
  originAddress String

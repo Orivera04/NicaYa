@@ -102,6 +102,7 @@ export const renameSavedPlace = (currentLabel: string, label: string) => api<Pla
 export const reverseGeocode = (lat: number, lng: number) => api<Place>(`/geocoding/reverse?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`);
 export const getRoute = (from: Place, to: Place) => api<{ points: Place[] }>("/routing/route", { method: "POST", body: JSON.stringify({ from, to }) });
 export const getRouteMatch = (points: Array<Pick<Place, "lat" | "lng">>) => api<{ segments: Place[][] }>("/routing/match", { method: "POST", body: JSON.stringify({ points }) });
+export const getTripPickupCode = (tripId: string) => api<{ code: string }>(`/trips/${tripId}/pickup-code`);
 
 export async function connectSocket(onConnectionIssue?: () => void): Promise<Socket | null> {
   const session = await restoreSession();
